@@ -163,6 +163,13 @@ glimpse(biom_and_nutr)
 
 glimpse(biom_and_food)
 
+# Making diabetes binary and then filtering to only have no diabetic ppl
+
+biom_and_food$DIABBC_binary <- ifelse(biom_and_food$DIABBC == 1 | biom_and_food$DIABBC == 3, 1, 0)
+
+biom_and_food <- biom_and_food[biom_and_food$DIABBC_binary == 0, ]
+
+glimpse(biom_and_food)
 # I guess ordinal regression / power analysis here
 
 ```
