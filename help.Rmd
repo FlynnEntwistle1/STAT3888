@@ -1,0 +1,68 @@
+---
+title: "hepl"
+output: html_document
+date: "2024-08-29"
+---
+
+```{r}
+library(here)
+library(tidyverse)
+library(dplyr)
+```
+
+
+## Reading in the data
+```{r}
+# National Health Survey Data
+b14 <- read.csv(here("National Health Survey (NHS)", "AHSnhs11b14.csv"))
+ba3 <- read.csv(here("National Health Survey (NHS)", "AHSnhs11ba3.csv"))
+bac <- read.csv(here("National Health Survey (NHS)", "AHSnhs11bac.csv"))
+bbi <- read.csv(here("National Health Survey (NHS)", "AHSnhs11bbi.csv"))
+bcn <- read.csv(here("National Health Survey (NHS)", "AHSnhs11bcn.csv"))
+bhh <- read.csv(here("National Health Survey (NHS)", "AHSnhs11bhh.csv"))
+bmd <- read.csv(here("National Health Survey (NHS)", "AHSnhs11bmd.csv"))
+bsp <- read.csv(here("National Health Survey (NHS)", "AHSnhs11bsp.csv"))
+
+# Nutrition & Physical Activity
+ba <- read.csv(here("Nutrition & Physical Activity", "AHSnpa11ba.csv"))
+bb <- read.csv(here("Nutrition & Physical Activity", "AHSnpa11bb.csv"))
+bf <- read.csv(here("Nutrition & Physical Activity", "AHSnpa11bf.csv"))
+bp <- read.csv(here("Nutrition & Physical Activity", "AHSnpa11bp.csv"))
+bs <- read.csv(here("Nutrition & Physical Activity", "AHSnpa11bs.csv"))
+
+```
+
+## Merging the csvs together
+
+```{r}
+# Merging National Health Survey together
+bac <- bac %>% select(-X)
+dfs <- c(b14, ba3, bac, bbi, bcn, bmd, bsp)
+
+national_health <- Reduce(function(x, y) merge(x, y, by = "ABSLID", all = TRUE), dfs)
+
+
+```
+
+## Gave up
+```{r}
+load("clean_data.Rdata")
+
+biom_and_nutr <- merge(filtered_biom, tech_nutr_filtered, by = "ABSPID")
+
+
+biom_and_food <- merge(tech_food_filtered,filtered_biom, by ="ABSPID", all.x=TRUE)
+
+tech_food_filtered$COMB
+glimp
+glimpse(tech_food_filtered)
+glimpse(tech_nutr_filtered)
+
+biom_and_food$COMBCODE
+# with_diabetes <- merged_data[merged_data$DIABBC %in% c(1, 2), ]
+# had_diabetes <- merged_data[merged_data$DIABBC == 3, ]
+# without_diabetes <- merged_data[merged_data$DIABBC == 5, ]
+```
+
+
+
