@@ -8,6 +8,7 @@ date: "2024-08-29"
 library(here)
 library(tidyverse)
 library(dplyr)
+library(caret)
 ```
 
 
@@ -44,25 +45,128 @@ national_health <- Reduce(function(x, y) merge(x, y, by = "ABSLID", all = TRUE),
 
 ```
 
-## Gave up
+## Ignore this and anything above
 ```{r}
 load("clean_data.Rdata")
+load("tech_data.Rdata")
+summarized_df <- tech_food_filtered %>%
+  group_by(ABSPID) %>%
+  summarize(
+    total_protein = sum(PROTEIN, na.rm = TRUE),
+    total_fatg = sum(FATG, na.rm = TRUE),
+    total_sugar_alcohol = sum(CHOWSA, na.rm = TRUE),
+    total_starch = sum(STARCH, na.rm = TRUE),
+    total_sugars = sum(SUGARS, na.rm = TRUE),
+    total_sfag = sum(SFAG, na.rm = TRUE),
+    total_mufag = sum(MUFAG, na.rm = TRUE),
+    total_pufag = sum(PUFAG, na.rm = TRUE),
+    total_fibre = sum(FIBRE, na.rm = TRUE)
+  )
+
+glimpse(summarized_df)
+
 
 biom_and_nutr <- merge(filtered_biom, tech_nutr_filtered, by = "ABSPID")
 
+biom_and_food <- merge(summarized_df,filtered_biom, by ="ABSPID", all.x=TRUE)
 
-biom_and_food <- merge(tech_food_filtered,filtered_biom, by ="ABSPID", all.x=TRUE)
+biom_and_food$DIABBC_binary <- ifelse(biom_and_food$DIABBC == 1 | biom_and_food$DIABBC == 3, 1, 0)
 
-tech_food_filtered$COMB
-glimp
-glimpse(tech_food_filtered)
-glimpse(tech_nutr_filtered)
+biom_and_food$DIABBC_binary <- as.factor(biom_and_food$DIABBC_binary)
 
-biom_and_food$COMBCODE
+summary(biom_and_food$DIABBC)
+
+
+control <- trainControl(method = "cv",  # Choose k-fold cross-validation
+                        number = 10)    # Number of folds (e.g., 10)
+
+cv_model <- train(DIABBC_binary ~ total_protein + total_fatg + total_starch + total_sugars + total_fibre,
+                  data = biom_and_food,
+                  method = "glm",      # Generalized linear model
+                  family = "binomial", # Logistic regression
+                  trControl = control) # Cross-validation control
+
+summary(cv_model)
+cv_model
+cv_model$results
+
+plot(cv_model)
+
+
+glimpse(summarized_df)
+glimpse(filtered_biom)
+boxplot(summarized_df$total_protein)
+boxplot(summarized_df$total_fatg)
+boxplot(summarized_df$total_starch)
+boxplot(summarized_df$total_sugars)
+
+
 # with_diabetes <- merged_data[merged_data$DIABBC %in% c(1, 2), ]
 # had_diabetes <- merged_data[merged_data$DIABBC == 3, ]
 # without_diabetes <- merged_data[merged_data$DIABBC == 5, ]
 ```
+
+## Chat is this real chat?
+
+```{r}
+load("tech_data.Rdata")
+
+# Cleaning tech_biom
+
+# Convert specified columns to integers
+tech_biom$EXLWMBC <- as.integer(tech_biom$EXLWMBC)
+tech_biom$EXLWTBC <- as.integer(tech_biom$EXLWTBC)
+tech_biom$EXLWVBC <- as.integer(tech_biom$EXLWVBC)
+
+# Replace 9996 with NA in specified columns
+tech_biom$EXLWMBC <- as.integer(ifelse(tech_biom$EXLWMBC == 9996, NA, tech_biom$EXLWMBC))
+tech_biom$EXLWTBC <- as.integer(ifelse(tech_biom$EXLWTBC == 9996, NA, tech_biom$EXLWTBC))
+tech_biom$EXLWVBC <- as.integer(ifelse(tech_biom$EXLWVBC == 9996, NA, tech_biom$EXLWVBC))
+
+# Calculate the proportion of missing values
+missing_proportion <- colMeans(is.na(tech_biom))
+
+# Remove columns with more than 50% missing values but always include DIAHBRSK and HBA1PREB
+columns_to_keep <- (missing_proportion <= 0.5) | (names(tech_biom) %in% c("DIAHBRSK", "HBA1PREB"))
+removed_high_na_col_biom <- tech_biom[, columns_to_keep]
+
+# Imputing variables with low proportion of missing values
+df_imputed <- hotdeck(removed_high_na_col_biom, "DIETRDI")
+df_imputed <- hotdeck(removed_high_na_col_biom, "INCDEC")
+df_imputed$SLPTIME[is.na(df_imputed$SLPTIME)] <- median(df_imputed$SLPTIME, na.rm = TRUE)
+
+# Removing all observations with missing values
+filtered_biom <- na.omit(df_imputed)
+
+glimpse(filtered_biom)
+
+# Merging dfs together
+summarized_df <- tech_food_filtered %>%
+  group_by(ABSPID) %>%
+  summarize(
+    total_protein = sum(PROTEIN, na.rm = TRUE),
+    total_fatg = sum(FATG, na.rm = TRUE),
+    total_sugar_alcohol = sum(CHOWSA, na.rm = TRUE),
+    total_starch = sum(STARCH, na.rm = TRUE),
+    total_sugars = sum(SUGARS, na.rm = TRUE),
+    total_sfag = sum(SFAG, na.rm = TRUE),
+    total_mufag = sum(MUFAG, na.rm = TRUE),
+    total_pufag = sum(PUFAG, na.rm = TRUE),
+    total_fibre = sum(FIBRE, na.rm = TRUE)
+  )
+
+biom_and_nutr <- merge(filtered_biom, tech_nutr_filtered, by = "ABSPID", all.x=TRUE)
+
+biom_and_food <- merge(filtered_biom,summarized_df, by ="ABSPID", all.x=TRUE)
+
+glimpse(biom_and_nutr)
+
+glimpse(biom_and_food)
+
+# I guess ordinal regression / power analysis here
+
+```
+
 
 
 
