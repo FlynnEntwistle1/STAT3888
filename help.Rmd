@@ -13,7 +13,7 @@ library(caret)
 
 
 ## Reading in the data
-```{r}
+```{r, eval = FALSE}
 # National Health Survey Data
 b14 <- read.csv(here("National Health Survey (NHS)", "AHSnhs11b14.csv"))
 ba3 <- read.csv(here("National Health Survey (NHS)", "AHSnhs11ba3.csv"))
@@ -35,7 +35,7 @@ bs <- read.csv(here("Nutrition & Physical Activity", "AHSnpa11bs.csv"))
 
 ## Merging the csvs together
 
-```{r}
+```{r, eval = FALSE}
 # Merging National Health Survey together
 bac <- bac %>% select(-X)
 dfs <- c(b14, ba3, bac, bbi, bcn, bmd, bsp)
@@ -46,7 +46,7 @@ national_health <- Reduce(function(x, y) merge(x, y, by = "ABSLID", all = TRUE),
 ```
 
 ## Ignore this and anything above
-```{r}
+```{r, eval = FALSE}
 load("clean_data.Rdata")
 load("tech_data.Rdata")
 summarized_df <- tech_food_filtered %>%
@@ -110,7 +110,7 @@ boxplot(summarized_df$total_sugars)
 
 ```{r}
 load("tech_data.Rdata")
-
+load("clean_data.Rdata")
 # Cleaning tech_biom
 
 # Convert specified columns to integers
@@ -130,6 +130,7 @@ missing_proportion <- colMeans(is.na(tech_biom))
 columns_to_keep <- (missing_proportion <= 0.5) | (names(tech_biom) %in% c("DIAHBRSK", "HBA1PREB"))
 removed_high_na_col_biom <- tech_biom[, columns_to_keep]
 
+library(VIM)
 # Imputing variables with low proportion of missing values
 df_imputed <- hotdeck(removed_high_na_col_biom, "DIETRDI")
 df_imputed <- hotdeck(removed_high_na_col_biom, "INCDEC")
@@ -172,8 +173,194 @@ biom_and_food <- biom_and_food[biom_and_food$DIABBC_binary == 0, ]
 glimpse(biom_and_food)
 # I guess ordinal regression / power analysis here
 
+
+```
+
+### Flynn stuff
+Doing ordinal regression on `HBA1PREB` dependent variable with numerical meal composition covariates (e.g. sugar, fat, etc). Levels of dependent variable are:
+
+1. "Less than 5.0"
+2. "5.0 to less than 5.5"
+3. "5.5 to less than 6.0"
+4. "6.0 to less than 6.5"
+5. "6.5 to less than 7.0"
+6. "7.0 or more"
+7. "Not applicable"
+8. "Not reported"
+
+
+
+#### Quick cleaning and EDA of biom_and_food
+```{r biom_eda}
+# renaming HBA1PREB and making ordered.
+levels(biom_and_food$HBA1PREB) = c("Less than 5.0", "5.0 to less than 5.5", "5.5 to less than 6.0",  "6.0 to less than 6.5", "6.5 to less than 7.0", "7.0 or more", "Not applicable", "Not reported")
+biom_and_food$HBA1PREB = factor(biom_and_food$HBA1PREB, ordered = TRUE) # also removes levels w 0 observations (i.e. the Not applicable / Not reported)
+```
+
+```{r, message=FALSE}
+#install.packages("GGally")
+library(GGally)
+
+# checking out collinearity among covariates
+ggpairs(biom_and_food |> dplyr::select(total_sugars, total_fibre, total_fatg))
 ```
 
 
 
+```{r}
+table(biom_and_food$HBA1PREB)
+```
+
+> Note: quite low cell counts for `6.5-7.0` and `7.0 or more`... will likely impact statistical power.
+
+So, we'll try fitting ordinal regression model, see what it spits out, and then make a simulated power test to sus out the effect of uneven class proportions in the dependent variable.
+
+
+#### Ordinal regression theory
+
+I had already started writing a bunch here when I realised its literally covered in the lecs. But wasn't covered well imo. I took a bit of time to understand this so happy to explain more in person
+
+A good resource (that John actually copied for his slides) is [here](https://stats.oarc.ucla.edu/r/dae/ordinal-logistic-regression/).
+
+**Main takeaways:**
+
+- Ordinal regression assumes that there's a "latent" (unobserved) continuous scale underlying the ordered groups of the dependent variable.
+- The "intercepts" are thresholds (cutpoints) which determine how the latent continuous variable is divided into the ordinal categories. It's not like a decision tree which deterministically forces a category for certain covariate values. They are the points at which the *cumulative probability* the model assigns a new observation in category k overtakes category k-1 (smooth transitions).
+- The imaginary continuous variable $\eta$ underlying the dependent variable just a linear combination using the coefficients from the R output.
+
+$$\eta = \beta_1X_1 + \beta_2X_2 + \beta_3X_3$$
+
+```{r}
+# ordinal regression
+library(MASS)
+ord_mod_1 = polr(HBA1PREB ~ total_sugars + total_fibre + total_fatg, data = biom_and_food, Hess = TRUE)
+
+# default "summary" output doesn't include p values for ordinal regression. 
+ord_summary <- function(model) {
+  ctable <- coef(summary(model))
+  p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+  ctable <- cbind(ctable, "p value" = p)
+  return(ctable)
+}
+
+summary(ord_mod_1)
+ord_summary(ord_mod_1) # literally the same but has p values and looks worse.
+```
+
+```{r}
+cutpoints <- ord_mod_1$zeta
+plot(1, type = "n", xlim = c(0, 2), ylim = range(cutpoints), xaxt = 'n',
+     xlab = "Ordinal Categories", ylab = "Cutpoints on Latent Scale", 
+     main = "Cutpoints of Ordinal Regression Model")
+
+# Add cutpoints to the plot
+points(rep(1, length(cutpoints)), cutpoints, pch = 16)
+
+# Add labels for categories
+axis(1, at = 1, labels = "Cutpoints")
+```
+
+
+### Assumptions
+
+The main non-obvious assumption is the *proportional odds assumption* - it asks whether the odds ratios between any two categories of the ordinal outcome are constant across all levels of the predictors. 
+
+> *Does the proportional odds assumption hold?*
+
+```{r}
+#install.packages("brant")
+library(brant)
+brant(ord_mod_1)
+```
+
+yea ig so.
+
+
+#### Power simulation
+Class imbalance could lead to loss of statistical power.
+
+For an ordinal regression model, we're testing the following hypotheses:
+
+- $H_0: \beta_1=\beta_2=...=\beta_k = 0$ 
+- $H_1:$ at least 1 $\beta_i\neq0, i\in[1,k]$
+
+
+
+```{r}
+n = length(biom_and_food$HBA1PREB)
+
+class_props = prop.table(table(biom_and_food$HBA1PREB))
+# these will be sampling weights.
+class_props
+```
+
+Here, the power analysis is really just concerned with the effect of class imbalance. I just opted for sampling covariate values from normal distribution for simplicity, but when you look at the correlation matrix I made earlier, they look much more like a chi-sq distribution. Might also try making an approximate chi-sq distribution using MLE based on the data, and seeing how that changes things. Worth asking John about.
+
+```{r}
+# attempt 1
+simulate_data <- function(n, weights, predictors) {
+  # Generate outcome variable according to class probabilities
+  outcome <- sample(1:length(weights), size = n, replace = TRUE, prob = weights)
+  
+  # Generate predictor variables (assume normal for simplicity)
+  X <- matrix(rnorm(n * length(predictors)), ncol = length(predictors))
+  colnames(X) <- predictors
+  
+  # Combine into a data frame
+  data <- data.frame(outcome = factor(outcome), X)
+  return(data)
+}
+
+covariates_only = biom_and_food |> dplyr::select(total_sugars, total_fibre, total_fatg)
+mu_vec <- colMeans(covariates_only)
+cov_matrix <- cov(covariates_only)
+
+# attempt 2: sampling from multivariate distribution that matches the distribution of the features.
+simulate_data_mvrnorm <- function(n, weights, predictors) {
+  # Generate outcome variable according to class probabilities
+  outcome <- sample(1:length(weights), size = n, replace = TRUE, prob = weights)
+  
+  # Generate predictor variables (assume normal for simplicity)
+  X <- mvrnorm(n = n, mu = mu_vec, Sigma = cov_matrix)
+  
+  # Combine into a data frame
+  data <- data.frame(outcome = factor(outcome), X)
+  return(data)
+}
+
+# finds empirical power for each covariate.
+ord_power_analysis <- function(B, n, class_probs, predictors) {
+  power_results <- matrix(NA, nrow = B, ncol = length(predictors)) # stores results
+  colnames(power_results) <- predictors
+  
+  for (i in 1:B) {
+    data <- simulate_data_mvrnorm(n, class_probs, predictors)
+    model <- polr(outcome ~ ., data = data, Hess = TRUE)
+    p_values <- ord_summary(model)[,4][1:length(predictors)]  # Extract p-values for all coefficients
+    
+    power_results[i, ] <- p_values < 0.05  # Store whether each coefficient is significant
+  }
+  #print(power_results)
+  #return(power_results)
+  # Compute power for each coefficient
+  power <- colMeans(power_results)
+  return(power)
+}
+```
+
+
+```{r}
+# our classes
+ord_power_analysis(B = 1000, n = n, class_probs = class_props, predictors = names(coefficients(ord_mod_1)))
+
+# balanced classes
+ord_power_analysis(B = 1000, n = n, class_probs = c(0.2, 0.2, 0.2, 0.2, 0.2), predictors = names(coefficients(ord_mod_1)))
+
+# extreme imbalance
+ord_power_analysis(B = 1000, n = n, class_probs = c(0.02, 0.02, 0.02, 0.02, 0.92), predictors = names(coefficients(ord_mod_1)))
+```
+
+This is just not working atm tbh, and probs not crucial. Might try again when I haven't been coding all day.
+
+Maybe next, let's just look at CV accuracy on minority classes and see what it spits out.
 
