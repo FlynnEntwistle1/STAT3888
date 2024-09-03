@@ -106,6 +106,22 @@ boxplot(summarized_df$total_sugars)
 # without_diabetes <- merged_data[merged_data$DIABBC == 5, ]
 ```
 
+## Code for Flynn
+
+```{r}
+tech_nutr_filtered <- tech_nutr %>%
+  filter(ABSPID %in% filtered_biom$ABSPID)
+
+tech_food_filtered <- tech_food %>% 
+  filter(ABSPID %in% filtered_biom$ABSPID)
+
+tech_food_filtered <- tech_food_filtered %>% select(-COMBCODE, -EATTIMEC, -EATOCC)
+
+
+save(filtered_biom, tech_nutr_filtered, tech_food_filtered, file="clean_data.Rdata")
+```
+
+
 ## Chat is this real chat?
 
 ```{r}
