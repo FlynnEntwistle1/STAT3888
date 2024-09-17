@@ -1,0 +1,227 @@
+---
+title: "Andrew_Questions2"
+output: html_document
+date: "2024-09-11"
+---
+
+```{r setup, include=FALSE}
+library(here)
+library(tidyverse)
+library(dplyr)
+library(caret)
+library(randomForest)
+library(rfPermute)
+library(knitr)
+library(kableExtra)
+library(nnet)
+library(ROSE)
+library(smotefamily)
+library(VIM)
+library(corrplot)
+library(GPArotation)
+library(nFactors)
+library(psych)
+library(car)
+library(ggcorrplot)
+load("tech_data.Rdata")
+```
+
+
+```{r}
+tech_biom$EXLWMBC <- as.integer(as.character(tech_biom$EXLWMBC))
+tech_biom$EXLWTBC <- as.integer(as.character(tech_biom$EXLWTBC))
+tech_biom$EXLWVBC <- as.integer(as.character(tech_biom$EXLWVBC))
+
+# Replace 9996 with NA in specified columns
+tech_biom$EXLWMBC <- as.integer(ifelse(tech_biom$EXLWMBC == 9996, NA, tech_biom$EXLWMBC))
+tech_biom$EXLWTBC <- as.integer(ifelse(tech_biom$EXLWTBC == 9996, NA, tech_biom$EXLWTBC))
+tech_biom$EXLWVBC <- as.integer(ifelse(tech_biom$EXLWVBC == 9996, NA, tech_biom$EXLWVBC))
+
+# Imputing variables with low proportion of missing values
+df_imputed <- hotdeck(removed_high_na_col_biom, "DIETRDI")
+df_imputed <- hotdeck(removed_high_na_col_biom, "INCDEC")
+df_imputed$SLPTIME[is.na(df_imputed$SLPTIME)] <- median(df_imputed$SLPTIME, na.rm = TRUE)
+
+glimpse(tech_food)
+glimpse(tech_nutr)
+```
+
+```{r}
+# Filtering out variables of interest
+filtered_nutr <- tech_nutr %>%
+  select(120:187)
+
+# Removing variables with 0 SD / variables where it all goes into one value
+zero_sd_columns <- sapply(filtered_nutr, function(x) sd(x, na.rm = TRUE) == 0) 
+zero_sd_columns
+filtered_nutr <- filtered_nutr[, !zero_sd_columns]
+
+
+# Removing variables that are TOO highly correlated
+cor_matrix <- cor(filtered_nutr)
+ggcorrplot(cor_matrix)
+
+high_correlation <- findCorrelation(cor_matrix, cutoff = 0.8)
+filtered_nutr <- filtered_nutr[, -high_correlation]
+
+# Making Correlation Matrix and Scree Plot
+cor_matrix <- cor(filtered_nutr)
+corrplot(cor_matrix)
+# determinant(cor_matrix)
+eigenvalues <- eigen(cor_matrix)$values
+plot(eigenvalues, 
+     type = "b", # Points and lines
+     xlab = "Number of Factors", 
+     ylab = "Eigenvalue", 
+     main = "Scree Plot")
+
+# Lecture slides PCA
+pca_result <- prcomp(filtered_nutr, center=TRUE, scale=TRUE)
+pca_result
+nutr_pca_var <- tibble(
+  n=1:length(pca_result$sdev),
+  evl = pca_result$sdev^2
+)
+
+ggplot(nutr_pca_var, aes(x=n, y=evl)) + 
+  geom_line() + 
+  theme_bw() + 
+  scale_x_continuous(breaks = seq(min(nutr_pca_var$n), max(nutr_pca_var$n), by = 1))
+
+k = 3
+
+filtered_nutr_standardized <- data.frame(scale(filtered_nutr, center = TRUE, scale=TRUE))
+
+res = factanal(~ ., data = filtered_nutr, factors=3, rotation="varimax", na.action=na.exclude, lower=0.01, nstart=4)
+
+load <- res$loadings[,1:2]
+plot(load, type="n")
+text(load,labels=names(filtered_nutr_standardized),cex=.7)
+```
+
+### Trying using tech_food
+```{r}
+
+# Keeping only patients that had food diary entry 
+day_1_and_day_2_food <- tech_food %>%
+  group_by(ABSHID, ABSPID) %>%
+  filter(all(c(1,2) %in% DAYNUM)) 
+
+merged_df <- merge(day_1_and_day_2_food, tech_biom, by = "ABSPID", all.x=TRUE)
+
+filtered_merged_df <- merged_df %>% 
+  filter(AGEC >= 18)
+
+glimpse(filtered_merged_df)
+
+# Splitting the data into serves and grams
+day_1_and_day_2_food_srv <- filtered_merged_df %>% 
+  group_by(ABSHID, ABSPID) %>%
+  select(FOODCODC, ends_with("SRV"))
+
+day_1_and_day_2_food_gm <- filtered_merged_df %>% 
+  group_by(ABSHID, ABSPID) %>%
+  select(FOODCODC ,ends_with("GM"))
+
+day1_and_day_2_food_nutr <- filtered_merged_df %>%
+  group_by(ABSHID, ABSPID) %>% 
+  select(3:48, -GRAMWGT)
+
+# Summing the mutliple observations for one patient into one
+summed_day_1_day_2_srv <- day_1_and_day_2_food_srv %>% 
+  group_by(ABSHID, ABSPID) %>%
+  summarise(across(ends_with("SRV"), sum, na.rm = TRUE))
+
+summed_day_1_day_2_gm <- day_1_and_day_2_food_gm %>% 
+  group_by(ABSHID, ABSPID) %>%
+  summarise(across(ends_with("GM"), sum, na.rm = TRUE))
+
+summed_day_1_day_2_nutr <- day1_and_day_2_food_nutr %>% 
+  group_by(ABSHID, ABSPID) %>%
+  summarize(across(colnames(day1_and_day_2_food_nutr[4:47]),sum, na.rm = TRUE))
+
+
+glimpse(summed_day_1_day_2_nutr)
+# Getting only the variables we want, We should look to expand to the FOODCODC when we get it working
+dat_srv <- summed_day_1_day_2_srv[, 3:ncol(summed_day_1_day_2_srv)]
+dat_gm <- summed_day_1_day_2_gm[, 3:ncol(summed_day_1_day_2_gm)]
+dat_nutr <- summed_day_1_day_2_nutr[ , 3:ncol(summed_day_1_day_2_nutr)]
+
+
+# Check and remove columns with SD of zero in dat_srv
+zero_sd_srv <- apply(dat_srv, 2, sd) == 0  # Find which columns have an SD of zero
+columns_with_zero_sd_srv <- names(dat_srv)[zero_sd_srv]  # Get the names of the columns with SD of zero
+print("Columns in dat_srv with SD of zero:")
+print(columns_with_zero_sd_srv)  # Print the names of the columns with SD of zero
+dat_srv <- dat_srv[, !zero_sd_srv] # Remove columns with SD of zero from dat_srv
+
+# Check and remove columns with SD of zero in dat_gm
+zero_sd_gm <- apply(dat_gm, 2, sd) == 0  # Find which columns have an SD of zero
+columns_with_zero_sd_gm <- names(dat_gm)[zero_sd_gm]  # Get the names of the columns with SD of zero
+print("Columns in dat_gm with SD of zero:")
+print(columns_with_zero_sd_gm)  # Print the names of the columns with SD of zero
+
+dat_gm <- dat_gm[, !zero_sd_gm] # Remove columns with SD of zero from dat_gm
+
+# Check and remove columns with SD of zero in nutr
+zero_sd_nutr <- apply(dat_nutr, 2, sd) == 0  # Find which columns have an SD of zero
+columns_with_zero_sd_nutr <- names(dat_nutr)[zero_sd_nutr]  # Get the names of the columns with SD of zero
+print("Columns in dat_nutr with SD of zero:")
+print(columns_with_zero_sd_nutr)  # Print the names of the columns with SD of zero
+
+dat_nutr <- dat_nutr[, !zero_sd_nutr] # Remove columns with SD of zero from dat_nutr
+
+# Making the correlation matrix
+cor_dat_srv <- cor(dat_srv, use="complete.obs")
+cor_dat_gm <- cor(dat_gm, use="complete.obs")
+cor_dat_nutr <- cor(dat_nutr, use="complete.obs")
+
+# Removing highly correlated varaibles
+corr_threshold = 0.7
+high_corr_srv <- findCorrelation(cor_dat_srv, cutoff = corr_threshold)
+high_corr_gm <- findCorrelation(cor_dat_gm, cutoff = corr_threshold)
+high_corr_nutr <- findCorrelation(cor_dat_nutr, cutoff = corr_threshold) 
+
+dat_srv_reduced <- dat_srv[ , -high_corr_srv]
+dat_gm_reduced <- dat_gm[ , -high_corr_gm]
+dat_nutr_reduced <- dat_nutr[ , -high_corr_nutr]
+
+# Recomputing the Correlation Matrix
+cor_dat_srv <- cor(dat_srv_reduced, use="complete.obs")
+cor_dat_gm <- cor(dat_gm_reduced, use="complete.obs")
+cor_dat_nutr <- cor(dat_nutr_reduced, use="complete.obs")
+
+# Making corrplot
+corrplot(cor_dat_srv)
+corrplot(cor_dat_gm)
+corrplot(cor_dat_nutr)
+
+# Scaling our dfs
+dat_srv_scale <- data.frame(scale(dat_srv_reduced, center=TRUE, scale=TRUE))
+dat_gm_scale <- data.frame(scale(dat_gm_reduced, center=TRUE, scale=TRUE))
+dat_nutr_scale <- data.frame(scale(dat_nutr_reduced, center=TRUE, scale=TRUE))
+
+
+principal_result_srv <- fa(dat_srv_scale, nfactors = 3,) 
+fa_result_srv = factanal(~ ., data=dat_srv_scale, factors = 3, rotation = "varimax", na.action = na.exclude, nstart=3, lower=0.01)
+principal_result_srv$loadings
+fa_result_srv$loadings
+
+principal_results_gm <-  fa(dat_gm_scale, nfactors = 3) 
+fa_result_gm <- factanal(~ ., data=dat_gm_scale, factors = 3, rotation = "varimax", na.action = na.exclude, nstart=3, lower=0.01)
+principal_results_gm$loadings
+fa_result_gm$loadings
+
+fa.parallel(cor_dat_nutr, fa = "pc", n.iter = 100, show.legend = TRUE, main = "Scree Plot with Parallel Analysis")
+principal_result_nutr <- fa(dat_nutr_scale, nfactors = 2,) 
+fa_result_nutr = factanal(~ ., data=dat_nutr_scale, factors = 2, rotation = "varimax", na.action = na.exclude, nstart=3, lower=0.01)
+principal_result_nutr$loadings
+fa_result_nutr$loadings
+
+```
+
+
+
+
+
+
