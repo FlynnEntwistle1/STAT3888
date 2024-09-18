@@ -1,0 +1,191 @@
+# Factor analysis
+
+```{r, message=FALSE}
+library(tidyverse)
+library(psych)
+load("../tech_data.Rdata")
+```
+
+
+```{r}
+which(colnames(tech_nutr)=="GRAINS1N") 
+which(colnames(tech_nutr)=="FRESUG1N")
+
+
+ids_with_2_days_recorded = tech_food |> select(ABSPID, DAYNUM) |>
+   group_by(ABSPID) |>
+   filter(n_distinct(DAYNUM) == 2) |>
+   distinct(ABSPID)
+
+nutr_with_age_BOTHDAYS = tech_nutr |>
+  group_by(ABSPID) |>
+  right_join(ids_with_2_days_recorded, by="ABSPID") |>
+  left_join(y = tech_biom |> select(ABSPID, AGEC), by = "ABSPID")
+  
+nutr_with_age_BOTHDAYS_over_45 = nutr_with_age_BOTHDAYS |>
+  filter(AGEC >= 45) |>
+  ungroup() |>
+  select(which(colnames(tech_nutr)=="GRAINS1N") : which(colnames(tech_nutr)=="FRESUG1N")) |>
+  scale()
+
+
+fa_result <- principal(nutr_with_age_BOTHDAYS_over_45, nfactors = 3, rotate = "varimax")
+#fa.parallel(nutr_over_45_std, fa = "pc", n.iter = 100, show.legend = FALSE)
+principal(nutr_with_age_BOTHDAYS_over_45, nfactors = 3, rotate = "varimax")$loadings
+
+
+fa(nutr_with_age_BOTHDAYS_over_45, nfactors = 2, rotate = "varimax")$loadings
+
+print(fa_result$loadings)
+
+```
+
+```{r grouping_together_red_meats, eval = FALSE}
+red_meat_restructure = nutr_with_age |>
+  filter(AGEC >= 45) |>
+  ungroup() |>
+  select(which(colnames(tech_nutr)=="GRAINS1N") : which(colnames(tech_nutr)=="FRESUG1N")) |>
+  mutate(REDMT_UNPROCESSED = RDMTL1N + RDMTLU1N + RDMTN1N + RDMTNU1N) |>
+  mutate(REDMT_PROCESSED = RDMTNP1N + RDMTLP1N) |>
+  select(-RDMTL1N, -RDMTLU1N, -RDMTN1N, -RDMTNU1N, -RDMTNP1N, -RDMTLP1N) |>
+  scale()
+
+
+fa_result <- principal(red_meat_restructure, nfactors = 2, rotate = "varimax")
+fa.parallel(red_meat_restructure, fa = "pc", n.iter = 100, show.legend = FALSE)
+
+print(fa_result$loadings)
+```
+
+## Retrying with food data
+
+Adding replacing food codes with category labels.
+```{r}
+library(stringr)
+fooditems_dict = read.csv("../data/nutmstatDataItems2019_CSV.csv") |>
+  filter(str_length(Category.Code) == 3) |>
+  rename("THRDIG" = "Category.Code")
+
+both_days_adults_food <- tech_food |>
+  group_by(ABSPID) |>
+  left_join(y = tech_biom |> select(ABSPID, AGEC), by = "ABSPID") |>
+  filter(n_distinct(DAYNUM) == 2, AGEC >= 45) |>
+  ungroup() |>
+  left_join(fooditems_dict, by = "THRDIG") |>
+  select(ABSPID, Category.Label, GRAMWGT)
+
+head(both_days_adults_food, 10)
+```
+
+#### Grouping categories together
+```{r}
+length(unique(both_days_adults_food$Category.Label))
+```
+
+There's 114 different categories identified in the food diary... some of these definitely overlap.
+
+```{r}
+table(both_days_adults_food$Category.Label)
+```
+
+
+```{r}
+wide_adults_food_grams = both_days_adults_food |>
+  group_by(ABSPID, Category.Label) |>
+  summarise(Total_Grams = sum(GRAMWGT, na.rm = TRUE), .groups = 'drop') |>
+  pivot_wider(names_from = Category.Label, values_from = Total_Grams, values_fill = 0)
+
+head(wide_adults_food_grams, 10)
+
+
+
+```
+
+Now, one observation per individual. Each row is sum in grams of consumption of that food over two days.
+
+Need to now consider grouping some of these categories together.
+```{r}
+wide_adults_food_grams_foods_grouped <- wide_adults_food_grams |>
+  # Soups
+  mutate(Soups = rowSums(across(matches("Soup", ignore.case = TRUE)), na.rm = TRUE)) |>
+  select(-matches("Soup"), Soups) |>
+  # Fish
+  mutate(`Fish and Fish Products` = rowSums(across(c(
+    `Other sea and freshwater foods`, 
+    `Crustacea and molluscs (excluding commercially sterile)`, 
+    `Fish and seafood products (homemade and takeaway)`,
+    `Mixed dishes with fish or seafood as the major component`,
+    `Packed (commercially sterile) fish and seafood`,
+    `Fin fish (excluding commercially sterile)`
+    )), na.rm = TRUE)) |>
+  select(-c(
+    `Other sea and freshwater foods`, 
+    `Crustacea and molluscs (excluding commercially sterile)`, 
+    `Fish and seafood products (homemade and takeaway)`,
+    `Mixed dishes with fish or seafood as the major component`,
+    `Packed (commercially sterile) fish and seafood`,
+    `Fin fish (excluding commercially sterile)`)) |>
+  # Fruit
+  mutate(`Fresh Fruit and Fruit-based Dishes` = rowSums(across(c(`Berry fruit`, `Stone fruit`, `Citrus fruit`,`Other fruit`, `Pome fruit`, `Tropical and subtropical fruit`, `Mixtures of two or more groups of fruit`, `Mixed dishes where fruit is the major component`)))) |>
+  select(-`Berry fruit`, -`Stone fruit`, -`Citrus fruit`, -`Other fruit`, -`Pome fruit`, -`Tropical and subtropical fruit`, -`Mixtures of two or more groups of fruit`, -`Mixed dishes where fruit is the major component`) |>
+  # Fruit and muesli bars
+  mutate(`Fruit and Muesli-style bars` = rowSums(across(c(`Fruit, nut and seed-bars`, `Muesli or cereal style bars`)))) |>
+  select(-c(`Fruit, nut and seed-bars`, `Muesli or cereal style bars`)) |>
+  # Cordials and soft drink
+  mutate(`Soft drinks, Cordials, Sports drinks, and Milkshakes` = rowSums(across(c(`Soft drinks, and flavoured mineral waters`, `Cordials`, `Flavoured milks and milkshakes`, `Electrolyte, energy and fortified drinks`)))) |>
+  select(-c(`Soft drinks, and flavoured mineral waters`, `Cordials`, `Flavoured milks and milkshakes`, `Electrolyte, energy and fortified drinks`)) |>
+  # Desserts
+  mutate(`Milk-based and other dessert items` = rowSums(across(c(`Other dishes where milk or a milk product is the major component`, `Sweet biscuits`, `Frozen milk products`, `Dishes and products other than confectionery where sugar is the major component`, `Custards`, `Soy-based ice confection`,`Cakes, muffins, scones, cake-type desserts`)))) |>
+  select(-c(`Other dishes where milk or a milk product is the major component`, `Sweet biscuits`, `Frozen milk products`, `Dishes and products other than confectionery where sugar is the major component`, `Custards`, `Soy-based ice confection`,`Cakes, muffins, scones, cake-type desserts`)) |>
+  # Chocolate and lollies
+  mutate(`Chocolate and lollies` = rowSums(across(c(`Chocolate and chocolate-based confectionery`, `Other confectionery`)))) |>
+  select(-c(`Chocolate and chocolate-based confectionery`, `Other confectionery`)) |>
+  # Butters, margarines, and oils
+  mutate(`Butters, margarines, and oils` = rowSums(across(c(`Margarine and table spreads`, `Plant oils`, `Unspecified fats`, `Other fats`)))) |>
+  select(-c(`Margarine and table spreads`, `Plant oils`, `Unspecified fats`, `Other fats`))
+  
+
+# This is actually quite annoying... `mixed dishes where cereal is main component` includes sandwiches, sushi, pizza, etc... 
+
+## Testing
+#colnames(wide_adults_food_grams_foods_grouped)
+#wide_adults_food_grams |> select(matches("fish", ignore.case = TRUE))
+```
+
+#### Normalisation (converting grams to servings)
+
+> NOTE: I did this before the whole similar-variable-grouping business. Ideally, turning grams -> servings comes BEFORE variable grouping. Otherwise, you're doing stuff like adding up grams of wine with grams of vodka... they mean very different things. Hence, conversion to servings comes first.
+
+Looking at this df, it's clear that directly comparing the grams consumed across different types of food doesn't really make sense. For example, comparing grams of honey with grams of meat doesn't make much sense, because different food items have inherently different serving sizes, caloric densities, and nutritional profiles. 
+
+If we don't standardise the grams within each food label category, the factor analysis may be biased by the average servings for different types of food having large differences in their absolute weight in grams.
+
+#### Approach 1: Z-score normalisation
+```{r}
+both_days_adults_food_Z_normalised <- both_days_adults_food |>
+  group_by(Category.Label) |> # standardising WITHIN each food group.
+  mutate(Grams_Zscore = (GRAMWGT - mean(GRAMWGT))/sd(GRAMWGT))
+
+head(both_days_adults_food_Z_normalised, 10)
+```
+
+Ok, this is a step in the right direction, but makes interpretation and modelling rly difficult. E.g., if someone has eaten a below-average sized serving of cereal, we definitely don't want to say that they're eating "negative cereal".
+
+#### Approach 2: Creating a "servings" measure based on grams
+Looking at the food data, we can create define "1 serving" as the median grams consumed of a particular item.
+
+From here, we just compute servings as (using tea as an example):
+
+$$\text{Servings(Tea)} = \frac{\text{Recorded tea weight (g)}}{\text{Median tea weight (g)}}$$
+
+By comparing grams to "servings", we can directly compare different types of food consumed, without having to worry about how different foods are usually consumed in different weights.
+
+```{r}
+both_days_adults_food_servings <- both_days_adults_food |>
+  group_by(Category.Label) |> 
+  mutate(median_grams = median(GRAMWGT)) |>
+  mutate(Servings = ifelse(median_grams != 0, GRAMWGT / median_grams, 0)) # sets to 0 if median grams is 0... avoids any divide by 0 errors.
+
+both_days_adults_food_servings$Servings <- format(both_days_adults_food_servings$Servings, scientific = FALSE)
+```
+
