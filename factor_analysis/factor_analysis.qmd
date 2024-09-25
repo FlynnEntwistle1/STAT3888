@@ -400,7 +400,7 @@ Promising results! Unhealthy group (group 1) has generally lower consumption of 
 - The authors of the paper we were looking at [here](https://www.mdpi.com/2072-6643/7/8/5295#B17-nutrients-07-05295) had similar results, though, and didn't think it was a problem for their use case.
 - Would be worth asking in class about, or doing our own research into.
 
-In most cases, the factors of factor analysis should explain enough variance to ensure that the extracted factors are of realistic significance. I looked at a few other papers and they said, "the proportion of variance explained by the 2 factors", maybe 50%, 2% could be bit less. In my opinion, if the situation permits, we may conduct correlation analysis first when selecting factors If it's prossible, which may make variance greater.
+In most cases, the factors of factor analysis should explain enough variance to ensure that the extracted factors are of realistic significance. I looked at a few other papers and they said, "the proportion of variance explained by the 2 factors", maybe 50%, 2% could be bit less. In my opinion, if the situation permits, we may conduct correlation analysis first when selecting factors If it's possible, which may make variance greater.
 
 **Controlling for confounders**:
 - Try refitting the model, but adding total energy (kJ) consumed as a predictor.
