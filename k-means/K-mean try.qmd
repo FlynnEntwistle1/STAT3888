@@ -1,0 +1,13 @@
+---
+title: "k-means try"
+format: html
+editor: visual
+---
+
+```{r}
+load("../tech_data.Rdata")
+```
+
+```{r}
+
+```
