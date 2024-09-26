@@ -392,10 +392,15 @@ Promising results! Unhealthy group (group 1) has generally lower consumption of 
 **Finding out more about factor analysis (vs PCA):**
 - What's actually the difference between factor analysis using `psych::fa(fm = "pa")` (i.e. factor analysis by the principal component method) and `psych::principal()`?
 
+-- The goal of psych::principal() is to find the principal component that explains the greatest variance, not to explain the common variance.
+-- psych::fa(fm = "pa") is a factor analysis based on the principal axis factoring method, which focuses on the common variance between explanatory variables.
+
 **Is explaining a low proportion of the variance in factor analysis a problem?**
 - There's still a lot of work to be done in grouping similar food items together, but currently, the proportion of variance explained by the 2 factors is really low (like 2% each).
 - The authors of the paper we were looking at [here](https://www.mdpi.com/2072-6643/7/8/5295#B17-nutrients-07-05295) had similar results, though, and didn't think it was a problem for their use case.
 - Would be worth asking in class about, or doing our own research into.
+
+In most cases, the factors of factor analysis should explain enough variance to ensure that the extracted factors are of realistic significance. I looked at a few other papers and they said, "the proportion of variance explained by the 2 factors", maybe 50%, 2% could be bit less. In my opinion, if the situation permits, we may conduct correlation analysis first when selecting factors If it's possible, which may make variance greater.
 
 **Controlling for confounders**:
 - Try refitting the model, but adding total energy (kJ) consumed as a predictor.
