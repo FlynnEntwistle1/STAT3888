@@ -25,7 +25,7 @@ library(readxl)
 library(readr)
 library(car)
 library(ggcorrplot)
-load("tech_data.Rdata")
+load("../data/tech_data.Rdata")
 ```
 
 

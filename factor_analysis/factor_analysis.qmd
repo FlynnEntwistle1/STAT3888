@@ -12,7 +12,7 @@ format:
 ```{r, message=FALSE}
 library(tidyverse)
 library(psych)
-load("../tech_data.Rdata")
+load("../data/tech_data.Rdata")
 ```
 
 > **Goal:** Factor analysis to group diet into 'dietary patterns' following the guidance in [this doc](https://docs.google.com/document/d/1BEE9nCQsFzxf1p8FEV7cxyNlCC5IXvN27Y6-tOlX314/edit?usp=sharing).
@@ -356,7 +356,7 @@ wide_adults_food_servings_foods_grouped <- wide_adults_food_servings |>
 
 ```{r}
 colnames(wide_adults_food_servings_foods_grouped)
-
+wide_adults_food_servings_foods_grouped
 #wide_adults_food_grams |> select(matches("fish", ignore.case = TRUE))
 ```
 
@@ -382,6 +382,25 @@ fa_scores_w_ids = data.frame(ABSPID = wide_adults_food_servings_foods_grouped$AB
 merged_with_biom_dat = merge(tech_biom, fa_scores_w_ids, by = "ABSPID")
 
 summary(lm(PHDCMWBC ~ PA1 + PA2, data = merged_with_biom_dat))
+```
+
+### Running PCA on Grouped Data
+
+```{r}
+fa.parallel(wide_adults_food_servings_foods_grouped |> select(-ABSPID)|> scale(), fa = "pc", n.iter = 100, main = "Parallel Analysis")
+PCA_grouped_result = principal(wide_adults_food_servings_foods_grouped |> select(-ABSPID)|> scale(), nfactors = 5, rotate="varimax")
+
+kable(as.data.frame(ifelse(abs(PCA_grouped_result$loadings) < 0.1, 0, PCA_grouped_result$loadings)), 
+      caption = "Principal Components Loadings")
+
+pca_scores = PCA_grouped_result$scores
+pca_scores_w_id = data.frame(ABSPID = wide_adults_food_servings_foods_grouped$ABSPID, pca_scores)
+pca_scores_w_id
+pca_merged_with_biom_dat = merge(tech_biom, pca_scores_w_id, by = "ABSPID")
+
+
+summary(lm(PHDCMWBC ~ RC1 + RC2 + RC3 + RC4 + RC5, data = pca_merged_with_biom_dat))
+fa.diagram(pca_result)
 ```
 
 
