@@ -9,6 +9,7 @@ library(here)
 library(tidyverse)
 library(dplyr)
 library(caret)
+library(randomForest)
 ```
 
 
@@ -129,15 +130,25 @@ load("tech_data.Rdata")
 load("clean_data.Rdata")
 # Cleaning tech_biom
 
+glimpse(tech_biom)
+
 # Convert specified columns to integers
-tech_biom$EXLWMBC <- as.integer(tech_biom$EXLWMBC)
-tech_biom$EXLWTBC <- as.integer(tech_biom$EXLWTBC)
-tech_biom$EXLWVBC <- as.integer(tech_biom$EXLWVBC)
+tech_biom$EXLWMBC <- as.integer(as.character(tech_biom$EXLWMBC))
+tech_biom$EXLWTBC <- as.integer(as.character(tech_biom$EXLWTBC))
+tech_biom$EXLWVBC <- as.integer(as.character(tech_biom$EXLWVBC))
 
 # Replace 9996 with NA in specified columns
 tech_biom$EXLWMBC <- as.integer(ifelse(tech_biom$EXLWMBC == 9996, NA, tech_biom$EXLWMBC))
 tech_biom$EXLWTBC <- as.integer(ifelse(tech_biom$EXLWTBC == 9996, NA, tech_biom$EXLWTBC))
 tech_biom$EXLWVBC <- as.integer(ifelse(tech_biom$EXLWVBC == 9996, NA, tech_biom$EXLWVBC))
+
+
+# Creating a dataframe which removes only the missing variables that is in DIAHBRSK and HBA1PREB
+
+new_tech_biom <- tech_biom %>%
+  filter(!is.na(HBA1PREB) & !is.na(DIAHBRSK) & !is.na(SMKSTAT))
+
+glimpse(new_tech_biom)
 
 # Calculate the proportion of missing values
 missing_proportion <- colMeans(is.na(tech_biom))
@@ -191,6 +202,125 @@ glimpse(biom_and_food)
 
 
 ```
+
+### Really simple classifier for SMKSTAT and Hba1c
+```{r}
+
+levels(biom_and_food$SMKSTAT)
+levels(biom_and_food$HBA1PREB)
+levels(biom_and_food$DIAHBRSK)
+
+biom_and_food$SMKSTAT <- droplevels(biom_and_food$SMKSTAT)
+biom_and_food$HBA1PREB <- droplevels(biom_and_food$HBA1PREB)
+biom_and_food$DIAHBRSK <- droplevels(biom_and_food$DIAHBRSK)
+
+# Check the levels of SMKSTAT to ensure 7 and 8 are removed
+levels(biom_and_food$SMKSTAT)
+levels(biom_and_food$HBA1PREB)
+levels(biom_and_food$DIAHBRSK)
+
+biom_and_food$DIAHBRSK <- factor(make.names(biom_and_food$DIAHBRSK))
+
+train_control <- trainControl(method = "cv", 
+                              number = 10, 
+                              classProbs = TRUE,   # Enable for classification
+                              savePredictions = TRUE,
+                              )   # For stratification
+
+
+model <- randomForest(DIAHBRSK ~ SMKSTAT, data = biom_and_food, importance = TRUE, ntree = 10, mtry = 2)
+
+
+rf_cv_model <- train(DIAHBRSK ~ SMKSTAT,
+                     data = biom_and_food,
+                     method = "rf",                # Use random forest
+                     trControl = train_control,     # CV settings
+                     ntree = 10)          
+
+rf_cv_model
+rf_cv_model$results$Accuracy
+
+
+rf_model <- rf_cv_model$finalModel
+plot_min_depth_distribution(rf_model)
+varImpPlot(rf_model)
+
+
+# Creating a Confusion Matrix
+predictions <- predict(rf_cv_model, biom_and_food)
+cm <- confusionMatrix(predictions, biom_and_food$DIAHBRSK)
+print(cm$byClass)
+
+biom_and_food_summary <- biom_and_food %>%
+  group_by(DIAHBRSK) %>%
+  summarise(count = n())
+
+# Plot using geom_col
+ggplot(biom_and_food_summary, aes(x = factor(DIAHBRSK), y = count)) +
+  geom_col(fill = "lightblue", position="fill") +
+  scale_x_discrete(labels = c("1" = "Normal", "2" = "At risk of diabetes", "3" = "Indicates diabetes")) +
+  labs(title = "Distribution of DIAHBRSK Status", x = "DIAHBRSK Status", y = "Count") +
+  theme_minimal()
+
+
+ggplot(biom_and_food, aes(x = factor(DIAHBRSK))) +
+  geom_bar(fill = "lightblue") +
+  scale_x_discrete(labels = c("1" = "Normal", "2" = "At risk of diabetes", "3" = "Indicates diabetes")) +
+  labs(title = "Distribution of DIAHBRSK Status", x = "DIAHBRSK Status", y = "Count") +
+  theme_minimal()
+
+tab1 <- table(biom_and_food$HBA1PREB)
+names(tab1) <- c("< 5.0", 
+                 "5.0 - 5.5", 
+                 "5.5 - 6.0", 
+                 "6.0 - 6.5", 
+                 "6.5 - 7.0", 
+                 "> 7.0")
+tab2 <- table(biom_and_food$DIAHBRSK)
+names(tab2) <- c("Normal", "At risk of diabetes", "Indicates diabetes")
+
+prop.table(tab1)
+prop.table(tab2)
+
+ggplot(biom_and_food, aes(x = factor(HBA1PREB))) +
+  geom_bar(fill = "lightgreen") +
+  scale_x_discrete(labels = c("1" = "< 5.0", 
+                              "2" = "5.0 - 5.5", 
+                              "3" = "5.5 - 6.0", 
+                              "4" = "6.0 - 6.5", 
+                              "5" = "6.5 - 7.0", 
+                              "6" = "> 7.0 ")) +
+  labs(title = "Distribution of HbA1c Ranges", x = "HbA1c Range (%)", y = "Count") +
+  theme_minimal()
+
+ggplot(biom_and_food, aes(x = factor(DIAHBRSK))) +
+  geom_bar(aes(y = ..prop.., group = 1), fill = "lightblue") +
+  scale_x_discrete(labels = c("X1" = "Normal", 
+                              "X2" = "At risk of diabetes", 
+                              "X3" = "Indicates diabetes")) +
+  labs(title = "Proportional Distribution of DIAHBRSK Status", 
+       x = "DIAHBRSK Status", 
+       y = "Proportion") +
+  theme_minimal()
+
+ggplot(biom_and_food, aes(x = factor(HBA1PREB))) +
+  geom_bar(aes(y = ..prop.., group = 1), fill = "lightgreen") +
+  scale_x_discrete(labels = c("1" = "< 5.0", 
+                              "2" = "5.0 - 5.5", 
+                              "3" = "5.5 - 6.0", 
+                              "4" = "6.0 - 6.5", 
+                              "5" = "6.5 - 7.0", 
+                              "6" = "> 7.0")) +
+  labs(title = "Proportional Distribution of HbA1c Ranges", 
+       x = "HbA1c Range (%)", 
+       y = "Proportion") +
+  theme_minimal()
+
+plot(biom_and_food$HBA1PREB)
+
+plot(biom_and_food$DIAHBRSK)
+```
+
 
 ### Flynn stuff
 Doing ordinal regression on `HBA1PREB` dependent variable with numerical meal composition covariates (e.g. sugar, fat, etc). Levels of dependent variable are:
@@ -249,7 +379,7 @@ $$\eta = \beta_1X_1 + \beta_2X_2 + \beta_3X_3$$
 ```{r}
 # ordinal regression
 library(MASS)
-ord_mod_1 = polr(HBA1PREB ~ total_sugars + total_fibre + total_fatg, data = biom_and_food, Hess = TRUE)
+ord_mod_1 = polr(DIAHBRSK ~ total_sugars + total_fibre + total_fatg, data = biom_and_food, Hess = TRUE)
 
 # default "summary" output doesn't include p values for ordinal regression. 
 ord_summary <- function(model) {
@@ -261,6 +391,8 @@ ord_summary <- function(model) {
 
 summary(ord_mod_1)
 ord_summary(ord_mod_1) # literally the same but has p values and looks worse.
+
+
 ```
 
 ```{r}

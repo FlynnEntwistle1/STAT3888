@@ -21,6 +21,8 @@ library(corrplot)
 library(GPArotation)
 library(nFactors)
 library(psych)
+library(readxl)
+library(readr)
 library(car)
 library(ggcorrplot)
 load("tech_data.Rdata")
@@ -88,16 +90,41 @@ ggplot(nutr_pca_var, aes(x=n, y=evl)) +
   theme_bw() + 
   scale_x_continuous(breaks = seq(min(nutr_pca_var$n), max(nutr_pca_var$n), by = 1))
 
-k = 3
-
-filtered_nutr_standardized <- data.frame(scale(filtered_nutr, center = TRUE, scale=TRUE))
-
-res = factanal(~ ., data = filtered_nutr, factors=3, rotation="varimax", na.action=na.exclude, lower=0.01, nstart=4)
-
-load <- res$loadings[,1:2]
-plot(load, type="n")
-text(load,labels=names(filtered_nutr_standardized),cex=.7)
 ```
+### Creating DICT for Food Level Data Items
+```{r}
+data <- read_excel("nutmstatDataItems2019.xlsx", sheet = 3)
+cleaned_data <- data[, -ncol(data)]
+
+# Remove rows where the second column is NA
+cleaned_data <- cleaned_data[!is.na(cleaned_data[[2]]), ]
+
+food_dict <- na.omit(cleaned_data)
+
+glimpse(cleaned_data)
+
+food_dict <- food_dict %>% rename(Code = `Variable name`)
+
+print(food_dict$Description[df$variable])
+
+map_code_to_description <- function(code, df) {
+  # Try to find the code in the data frame
+  description <- df$Description[df$code == code]
+  
+  # If code is found, return the description, otherwise return a message
+  if (length(description) > 0) {
+    return(description)
+  } else {
+    return("Code not found")
+  }
+}
+
+print(map_code_to_description("ABSPID", food_dict))
+
+food_dict
+
+```
+
 
 ### Trying using tech_food
 ```{r}
@@ -201,9 +228,23 @@ dat_srv_scale <- data.frame(scale(dat_srv_reduced, center=TRUE, scale=TRUE))
 dat_gm_scale <- data.frame(scale(dat_gm_reduced, center=TRUE, scale=TRUE))
 dat_nutr_scale <- data.frame(scale(dat_nutr_reduced, center=TRUE, scale=TRUE))
 
+# Renaming the codes into descriptions
 
-principal_result_srv <- fa(dat_srv_scale, nfactors = 3,) 
-fa_result_srv = factanal(~ ., data=dat_srv_scale, factors = 3, rotation = "varimax", na.action = na.exclude, nstart=3, lower=0.01)
+food_dict
+# dat_srv_scale %>%
+#   mutate(row = 1:nrow(dat_srv_scale)) %>%
+#   reshape2::melt(id.vars=c("row"))
+
+rename_vector <- setNames(food_dict$Description, food_dict$Code)
+colnames(dat_srv_scale) <- rename_vector[colnames(dat_srv_scale)]
+colnames(dat_gm_scale) <- rename_vector[colnames(dat_gm_scale)]
+colnames(dat_nutr_scale) <- rename_vector[colnames(dat_nutr_scale)]
+
+# Doing the Factor Analysis
+
+fa.parallel(cor_dat_srv, fa = "pc", n.iter = 100, show.legend = TRUE, main = "Scree Plot with Parallel Analysis")
+principal_result_srv <- fa(dat_srv_scale, nfactors = 3, ) 
+fa_result_srv = factanal(~ ., data=dat_srv_scale, factors =3, rotation = "varimax", na.action = na.exclude, nstart=3, lower=0.01)
 principal_result_srv$loadings
 fa_result_srv$loadings
 
@@ -217,6 +258,41 @@ principal_result_nutr <- fa(dat_nutr_scale, nfactors = 2,)
 fa_result_nutr = factanal(~ ., data=dat_nutr_scale, factors = 2, rotation = "varimax", na.action = na.exclude, nstart=3, lower=0.01)
 principal_result_nutr$loadings
 fa_result_nutr$loadings
+
+
+
+# Putting it into a csv
+principal_loadings <- as.data.frame(unclass(principal_result_srv$loadings))
+# Apply the threshold: if abs(value) < 0.1, set it to 0
+principal_loadings[abs(principal_loadings) < 0.1] <- 0
+
+# Export to CSV
+write.csv(principal_loadings, "principal_loadings.csv", row.names = TRUE)
+fa_loadings <- as.data.frame(unclass(fa_result_srv$loadings))
+
+# Apply the threshold: if abs(value) < 0.1, set it to 0
+fa_loadings[abs(fa_loadings) < 0.1] <- 0
+
+# Export to CSV
+write.csv(fa_loadings, "fa_loadings_thresholded.csv", row.names = TRUE)
+
+# Convert loadings to a dataframe and threshold small values to 0
+principal_loadings_nutr <- as.data.frame(unclass(principal_result_nutr$loadings))
+
+# Apply the threshold: if abs(value) < 0.1, set it to 0
+principal_loadings_nutr[abs(principal_loadings_nutr) < 0.1] <- 0
+
+# Export to CSV
+write.csv(principal_loadings_nutr, "principal_loadings_nutr_thresholded.csv", row.names = TRUE)
+
+# Convert loadings to a dataframe and threshold small values to 0
+fa_loadings_nutr <- as.data.frame(unclass(fa_result_nutr$loadings))
+
+# Apply the threshold: if abs(value) < 0.1, set it to 0
+fa_loadings_nutr[abs(fa_loadings_nutr) < 0.1] <- 0
+
+# Export to CSV
+write.csv(fa_loadings_nutr, "fa_loadings_nutr_thresholded.csv", row.names = TRUE)
 
 ```
 
