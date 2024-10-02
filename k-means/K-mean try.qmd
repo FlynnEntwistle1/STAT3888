@@ -14,22 +14,22 @@ library(ggplot2)
 
 ```{r}
 
-# 1. 加載數據並篩選數值型變量
+# 1. Load data and filter numeric variables
 tech_food_numeric <- tech_food[, sapply(tech_food, is.numeric)]
 
-# 2. 移除含有 NA 的行
+# 2. Remove rows containing NA
 tech_food_numeric_clean <- tech_food_numeric[complete.cases(tech_food_numeric), ]
 
-# 3. 移除所有變量中值為 0 的行
+# 3. Remove rows with a value of 0 from all variables
 tech_food_numeric_clean <- tech_food_numeric_clean[rowSums(tech_food_numeric_clean == 0) != ncol(tech_food_numeric_clean), ]
 
-# 4. 刪除只有單一值的列，這些列對聚類無意義
+# 4. Delete columns with a single value that are meaningless to clustering
 tech_food_numeric_clean <- tech_food_numeric_clean[, apply(tech_food_numeric_clean, 2, function(x) length(unique(x)) > 1)]
 
-# 5. 標準化數據
+# 5. Standardized data
 scaled_data <- scale(tech_food_numeric_clean)
 
-# 6. 使用 Elbow 方法來選擇合適的分群數目
+# 6. Use the Elbow method to select the appropriate number of clusters
 wss <- (nrow(scaled_data)-1)*sum(apply(scaled_data, 2, var))
 for (i in 2:15) wss[i] <- sum(kmeans(scaled_data, centers=i)$tot.withinss)
 plot(1:15, wss, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares")
