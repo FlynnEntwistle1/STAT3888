@@ -12,6 +12,7 @@ load("../data/tech_data.Rdata")
 library(ggplot2)
 library(caret)
 library(dplyr)
+library(tidyr)
 ```
 
 Number for K
@@ -86,5 +87,29 @@ cluster_summary <- data_with_clusters %>%
   summarise(across(everything(), list(mean = mean, sd = sd, median = median)))
   
 print(cluster_summary)
+
+```
+
+```{r}
+
+
+cluster_summary_long <- cluster_summary %>%
+  pivot_longer(
+    cols = -cluster,
+    names_to = c("feature", "statistic"),
+    names_sep = "_"
+  ) %>%
+  filter(statistic == "mean") # Mean here, can be changed
+
+cluster_summary_wide <- cluster_summary_long %>%
+  select(-statistic) %>%        
+  pivot_wider(
+    names_from = cluster,        
+    values_from = value,         
+    names_prefix = "Cluster_"    
+  )
+
+print(cluster_summary_wide)
+
 
 ```
