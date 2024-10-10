@@ -1,0 +1,66 @@
+# Loadings table visualisation for nutr students
+
+To help label the PC's...
+
+```{r}
+library(tidyverse)
+library(knitr)
+
+load("../PCA_results.RData")
+```
+
+For first 4 principal components:
+
+```{r}
+num_PCs = 4
+
+pca_loadings <- pca_result$rotation[,1:num_PCs]
+
+# pc1 <- pca_loadings[,1]
+
+# pc1[order(abs(pc1), decreasing = TRUE)]
+
+# most influential loadings (6 positive, 6 negative)
+
+get_top_loadings <- function(PC) {
+  pos = PC[order(PC, decreasing = TRUE)][1:6]
+  neg = rev(PC[order(PC)][1:6]) # assuming there's >= 6 with negative loading...
+  
+  mat = as.matrix(cbind(c(pos, neg)))
+  names = rownames(mat)
+  rownames(mat) = NULL
+  mat <- cbind(names, round(mat, 3))
+  return(mat)
+}
+
+
+# sry idk why i chose to do this recursively...
+make_table <- function(curr_tab, i) {
+  spiel = c(paste("Dietary pattern", i, "names"), paste("Dietary pattern", i, "loadings"))
+  
+  if (i == num_PCs + 1) {
+    return(curr_tab)
+  } else if (i == 1) {
+    next_tab = rbind(spiel, get_top_loadings(pca_loadings[,i]))
+    return(make_table(next_tab, i + 1))
+  }
+  else {
+    next_tab = cbind(curr_tab, rbind(spiel, get_top_loadings(pca_loadings[,i])))
+    return(make_table(next_tab, i + 1))
+  }
+}
+
+tab_result = make_table(NULL, 1)
+
+colnames(tab_result) = tab_result[1,]
+tab_result <- tab_result[-1,]
+
+rownames(tab_result) = NULL
+colnames(tab_result) = NULL
+
+library(kableExtra)
+
+kable(tab_result, booktabs = TRUE) |> kable_material()
+
+```
+

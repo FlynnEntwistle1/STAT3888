@@ -1,0 +1,335 @@
+# Code for generating principal components, based on food data.
+
+> Loading in John's data:
+
+
+```{r, message=FALSE}
+library(tidyverse)
+load("../data/tech_data.Rdata")
+```
+
+
+## Creating dataset
+
+Currently:
+- Population is all adults over 45 who responded to the survey on BOTH days.
+    - Motivation for this is that metabolism generally decreases with age... probably good to consult the nutrition students, though.
+- Food codes have been replaced with their actual labels in the data dictionary.
+
+```{r}
+library(stringr)
+
+fooditems_dict_major = read.csv("../data/nutmstatDataItems2019_CSV.csv") |>
+  filter(str_length(Category.Code) == 3) |>
+  dplyr::rename("THRDIG" = "Category.Code") |>
+  dplyr::rename("Category.Label.Major" = "Category.Label")
+
+fooditems_dict_minor = read.csv("../data/nutmstatDataItems2019_CSV.csv") |>
+  filter(str_length(Category.Code) == 5) |>
+  dplyr::rename("FIVDIG" = "Category.Code") |>
+  dplyr::rename("Category.Label.Minor" = "Category.Label")
+
+both_days_adults_food <- tech_food |>
+  group_by(ABSPID) |>
+  left_join(y = tech_biom |> select(ABSPID, AGEC), by = "ABSPID") |>
+  filter(n_distinct(DAYNUM) == 2, AGEC >= 45) |>
+  ungroup() |>
+  left_join(fooditems_dict_major, by = "THRDIG") |>
+  left_join(fooditems_dict_minor, by = "FIVDIG") |>
+  select(ABSPID, Category.Label.Major, Category.Label.Minor, GRAMWGT)
+
+head(both_days_adults_food, 10)
+```
+
+
+### (NEW) Splitting necessary major groups by minor groups
+```{r}
+complex_group_splits <- both_days_adults_food |>
+  mutate(Category.Label.Major = 
+           ifelse(Category.Label.Major == "Potatoes",
+             ifelse(Category.Label.Minor == "Potato products", "Fried Potatoes and chips", "Potatoes and potato dishes"), 
+           Category.Label.Major)) |>
+  mutate(Category.Label.Major = 
+           ifelse(Category.Label.Major == "Mixed dishes where cereal is the major ingredient",
+                  ## then
+                  case_when(
+                    str_detect(Category.Label.Minor, regex("pizza", ignore_case = TRUE)) ~ "Pizza",
+                    str_detect(Category.Label.Minor, regex("burgers", ignore_case = TRUE)) ~ "Burgers",
+                    str_detect(Category.Label.Minor, regex("sushi", ignore_case = TRUE)) ~ "Sushi",
+                    str_detect(Category.Label.Minor, regex("saturated fat >5 g/100 g", ignore_case = TRUE)) ~ "High-fat cereal-based takeaway-style food",
+                    # LOW FAT TAKEAWAY: Note: R does not recognise ≤ sign. All higher fat cases captured above.
+                    str_detect(Category.Label.Minor, regex("5 g/100 g", ignore_case = TRUE)) | Category.Label.Minor == "Other savoury grain dishes" ~ "Low-fat cereal-based takeaway-style food",
+                    .default = "Gnocchi and steamed buns"
+                    ),
+                  Category.Label.Major
+          )
+         ) |>
+  select(-Category.Label.Minor) |>
+  dplyr::rename("Category.Label" = "Category.Label.Major")
+```
+
+
+### Creating a "servings" measure based on grams
+Looking at the food data, we can create define "1 serving" as the median grams consumed of a particular item.
+
+From here, we just compute servings as (using tea as an example):
+
+$$\text{Servings(Tea)} = \frac{\text{Recorded tea weight (g)}}{\text{Median tea weight (g)}}$$
+
+By comparing grams to "servings", we can directly compare different types of food consumed, without having to worry about how different foods are usually consumed in different weights.
+
+```{r}
+both_days_adults_food_servings <- complex_group_splits |>
+  group_by(Category.Label) |> 
+  mutate(median_grams = median(GRAMWGT)) |>
+  mutate(Servings = ifelse(median_grams != 0, GRAMWGT / median_grams, 0)) # sets to 0 if median grams is 0... avoids any divide by 0 errors.
+
+both_days_adults_food_servings$Servings <- format(both_days_adults_food_servings$Servings, scientific = FALSE)
+head(both_days_adults_food_servings, 10)
+```
+
+#### Summarising data such that we have one row per individual
+
+Each row is summed servings of food that person consumed over two days.
+
+```{r}
+wide_adults_food_servings = both_days_adults_food_servings |>
+  select(-GRAMWGT, -median_grams) |>
+  mutate(Servings = as.numeric(Servings)) |>
+  group_by(ABSPID, Category.Label) |>
+  summarise(Total_Servings = sum(Servings, na.rm = TRUE), .groups = 'drop') |>
+  pivot_wider(names_from = Category.Label, values_from = Total_Servings, values_fill = 0)
+
+head(wide_adults_food_servings, 10)
+```
+
+#### Grouping food items together with substantial overlap
+
+Merging together overlapping food items (columns) aids w factor analysis.
+
+**Note:** Ingredients with minimal nutritional content (e.g. baking soda, herbs) and/or low count will be removed.
+
+```{r}
+wide_adults_food_servings_foods_grouped <- wide_adults_food_servings |>
+  # Removing variables with minimal nutritional content and/or rare groups, which don't fit in with anything else.
+  select(-c(
+    `Herbs, spices, seasonings and stock cubes`, # this also includes added salt..? Should be careful.
+    `Essences`,
+    `Stuffings`,
+    `Chemical raising agents and cooking ingredients`,
+    `Infant foods`,
+    `Infant cereal products`,
+    `Cheese substitute`,
+    `Soy-based ice confection`,
+    `Dry soup mix`,
+    `Soy-based yoghurts`,
+    `Formula dietary foods`
+    )) |>
+  # Soups
+  mutate(Soups = rowSums(across(matches("Soup", ignore.case = TRUE)), na.rm = TRUE)) |>
+  select(-matches("Soup"), Soups) |>
+  # Fish
+  mutate(`Fish and Fish Products` = rowSums(across(c(
+    `Other sea and freshwater foods`, 
+    `Crustacea and molluscs (excluding commercially sterile)`, 
+    `Fish and seafood products (homemade and takeaway)`,
+    `Mixed dishes with fish or seafood as the major component`,
+    `Packed (commercially sterile) fish and seafood`,
+    `Fin fish (excluding commercially sterile)`
+    )), na.rm = TRUE)) |>
+  select(-c(
+    `Other sea and freshwater foods`, 
+    `Crustacea and molluscs (excluding commercially sterile)`, 
+    `Fish and seafood products (homemade and takeaway)`,
+    `Mixed dishes with fish or seafood as the major component`,
+    `Packed (commercially sterile) fish and seafood`,
+    `Fin fish (excluding commercially sterile)`)) |>
+  # Fruit
+  mutate(`Fresh Fruit and Fruit-based Dishes` = rowSums(across(c(
+    `Berry fruit`, 
+    `Stone fruit`,
+    `Citrus fruit`,
+    `Other fruit`,
+    `Pome fruit`,
+    `Tropical and subtropical fruit`,
+    `Mixtures of two or more groups of fruit`
+    )))) |>
+  select(-`Berry fruit`, -`Stone fruit`, -`Citrus fruit`, -`Other fruit`, -`Pome fruit`, -`Tropical and subtropical fruit`, -`Mixtures of two or more groups of fruit`) |>
+  # Fruit and muesli bars
+  mutate(`Fruit and Muesli-style bars` = rowSums(across(c(
+    `Fruit, nut and seed-bars`,
+    `Muesli or cereal style bars`)))) |>
+  select(-c(`Fruit, nut and seed-bars`, 
+            `Muesli or cereal style bars`)) |>
+  # Cordials and soft drink
+  mutate(`Soft drinks, Cordials, Sports drinks, and Milkshakes` = rowSums(across(c(
+    `Soft drinks, and flavoured mineral waters`, 
+    `Cordials`, 
+    `Flavoured milks and milkshakes`, 
+    `Electrolyte, energy and fortified drinks`)))) |>
+  select(-c(`Soft drinks, and flavoured mineral waters`, 
+            `Cordials`, 
+            `Flavoured milks and milkshakes`, 
+            `Electrolyte, energy and fortified drinks`)) |>
+  # Desserts
+  mutate(`Milk-based and other dessert items` = rowSums(across(c(
+    `Other dishes where milk or a milk product is the major component`, 
+    `Sweet biscuits`, 
+    `Frozen milk products`, 
+    `Dishes and products other than confectionery where sugar is the major component`, 
+    `Custards`,
+    `Batter-based products`,
+    `Mixed dishes where fruit is the major component`,
+    `Cakes, muffins, scones, cake-type desserts`)))) |>
+  select(-c(`Other dishes where milk or a milk product is the major component`, 
+            `Sweet biscuits`, 
+            `Frozen milk products`, 
+            `Dishes and products other than confectionery where sugar is the major component`,
+            `Mixed dishes where fruit is the major component`,
+            `Custards`, `Batter-based products`, `Cakes, muffins, scones, cake-type desserts`)) |>
+  # Chocolate and lollies
+  mutate(`Chocolate and lollies` = rowSums(across(c(
+    `Chocolate and chocolate-based confectionery`, 
+    `Other confectionery`)))) |>
+  select(-c(`Chocolate and chocolate-based confectionery`, 
+            `Other confectionery`)) |>
+  # Butters, margarines, and oils
+  mutate(`Butters, margarines, and oils` = rowSums(across(c(
+    `Butters`,
+    `Margarine and table spreads`, 
+    `Plant oils`,
+    `Unspecified fats`,
+    `Dairy blends`,
+    `Other fats`)))) |>
+  select(-c(`Butters`, `Margarine and table spreads`, `Plant oils`, `Unspecified fats`, `Dairy blends`, `Other fats`)) |>
+  # Sauces
+  mutate(`Sauces` = rowSums(across(c(`Gravies and savoury sauces`, `Salad dressings`)))) |>
+  select(-c(`Gravies and savoury sauces`, `Salad dressings`)) |>
+  # Coffee and Tea
+  mutate(`Coffee and Tea` = rowSums(across(c(`Coffee and coffee substitutes`, `Tea`)))) |>
+  select(-c(`Coffee and coffee substitutes`, `Tea`)) |>
+  # Starchy snacks
+  mutate(`Starchy snacks` = rowSums(across(c(
+    `Extruded or reformed snacks`,
+    `Other snacks`,
+    `Corn snacks`,
+    `Potato snacks`
+    )))) |>
+  select(-c(
+    `Extruded or reformed snacks`,
+    `Other snacks`,
+    `Corn snacks`,
+    `Potato snacks`)) |>
+  # Alcohol
+  mutate(`Alcohol` = rowSums(across(c(
+    `Wines`,
+    `Beers`,
+    `Spirits`,
+    `Cider and perry`,
+    `Other alcoholic beverages`
+  )))) |>
+  select(-c(
+    `Wines`,
+    `Beers`,
+    `Spirits`,
+    `Cider and perry`,
+    `Other alcoholic beverages`
+  )) |>
+  # Legumes
+  mutate(`Legumes and pulses` = rowSums(across(c(
+    `Peas and beans`,
+    `Mature legumes and pulses`,
+    `Mature legume and pulse products and dishes`
+  )))) |>
+  select(-c(
+    `Peas and beans`,
+    `Mature legumes and pulses`,
+    `Mature legume and pulse products and dishes`
+  )) |>
+  # Breakfast cereal and porridge
+  mutate(`Breakfast cereal and porridge` = rowSums(across(c(
+    `Breakfast cereals, ready to eat`,
+    `Breakfast cereals, hot porridge style`
+  )))) |>
+  select(-c(
+    `Breakfast cereals, ready to eat`,
+    `Breakfast cereals, hot porridge style`)) |>
+  # Cheese, yogurts
+  mutate(`Cheese, yogurt, cream` = rowSums(across(c(
+    `Cheese`,
+    `Yoghurt`,
+    `Cream`
+  )))) |>
+  select(-c(
+    `Cheese`,
+    `Yoghurt`,
+    `Cream`
+  )) |>
+  # Processed meat
+  mutate(`Processed meats` = rowSums(across(c(
+    `Processed meat`,
+    `Sausages, frankfurts and saveloys`
+  )))) |>
+  select(-c(
+    `Processed meat`,
+    `Sausages, frankfurts and saveloys`
+  )) |>
+  # Red meat, unprocessed
+  mutate(`Red meat, unprocessed` = rowSums(across(c(
+    `Beef, sheep and pork, unprocessed`,
+    `Mammalian game meats`,
+  )))) |>
+  select(-c(
+    `Beef, sheep and pork, unprocessed`,
+    `Mammalian game meats`,
+  )) |>
+  # Eggs and egg dishes
+  mutate(`Eggs and egg dishes` = rowSums(across(c(
+    `Eggs`,
+    `Dishes where egg is the major ingredient`,
+  )))) |>
+  select(-c(
+    `Eggs`,
+    `Dishes where egg is the major ingredient`,
+  ))
+
+# This is actually quite annoying... `mixed dishes where cereal is main component` includes sandwiches, sushi, pizza, etc... 
+
+## Testing
+colnames(wide_adults_food_servings_foods_grouped)
+```
+
+> Results of variable merging (so far).
+
+```{r}
+colnames(wide_adults_food_servings_foods_grouped)
+```
+
+
+## PCA
+
+```{r}
+pca_result <- prcomp(wide_adults_food_servings_foods_grouped |> select(-ABSPID), scale = TRUE)
+
+summary(pca_result)
+
+# This is what is used in regression.
+pca_scores <- pca_result$x
+
+# loadings (contributions of each variable to the components)
+pca_loadings <- pca_result$rotation
+
+# Plot the variance explained by each principal component
+plot(pca_result, type = "l")
+```
+
+There's approx. 4 PC's with eigenvalue > 1.5.
+
+#### Saving PCA data
+
+```{r}
+save(pca_result, file = "PCA_results.RData")
+```
+
+
+

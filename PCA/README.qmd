@@ -1,0 +1,26 @@
+# NEW PCA FOLDER
+
+> Everything's getting messy.
+
+- Isolated PCA code calculated using `prcomp` (same as lectures) is in `PCA.qmd`.
+- Any analysis you do on the PC's should ideally be done in a separate file, loading in the PC data at the start.
+  - I'm just putting my code inside `/Flynn`.
+
+**For example:**
+
+```{r}
+load("PCA_results.RData")
+
+summary(pca_result)
+
+# This is what is used in regression!
+pca_scores <- pca_result$x
+
+# loadings (contributions of each variable to the components)
+pca_loadings <- pca_result$rotation
+
+# Plot the variance explained by each principal component
+plot(pca_result, type = "l")
+```
+
+
