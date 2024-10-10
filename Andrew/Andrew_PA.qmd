@@ -1,0 +1,656 @@
+---
+format:
+  html:
+    toc: true
+    self-contained: true
+    code-fold: true
+    code-tools: true
+---
+
+# Factor analysis
+
+```{r, message=FALSE}
+library(tidyverse)
+library(psych)
+load("../data/tech_data.Rdata")
+```
+
+> **Goal:** Factor analysis to group diet into 'dietary patterns' following the guidance in [this doc](https://docs.google.com/document/d/1BEE9nCQsFzxf1p8FEV7cxyNlCC5IXvN27Y6-tOlX314/edit?usp=sharing).
+
+## First try with `tech_nutr` data
+
+```{r}
+which(colnames(tech_nutr)=="GRAINS1N") 
+which(colnames(tech_nutr)=="FRESUG1N")
+
+ids_with_2_days_recorded = tech_food |> select(ABSPID, DAYNUM) |>
+   group_by(ABSPID) |>
+   filter(n_distinct(DAYNUM) == 2) |>
+   distinct(ABSPID)
+
+nutr_with_age_BOTHDAYS = tech_nutr |>
+  group_by(ABSPID) |>
+  right_join(ids_with_2_days_recorded, by="ABSPID") |>
+  left_join(y = tech_biom |> select(ABSPID, AGEC), by = "ABSPID")
+  
+nutr_with_age_BOTHDAYS_over_45 = nutr_with_age_BOTHDAYS |>
+  filter(AGEC >= 45) |>
+  ungroup() |>
+  select(which(colnames(tech_nutr)=="GRAINS1N") : which(colnames(tech_nutr)=="FRESUG1N")) |>
+  scale()
+
+
+fa_result <- principal(nutr_with_age_BOTHDAYS_over_45, nfactors = 3, rotate = "varimax")
+# fa.parallel(nutr_over_45_std, fa = "pc", n.iter = 100, show.legend = FALSE)
+principal(nutr_with_age_BOTHDAYS_over_45, nfactors = 3, rotate = "varimax")$loadings
+
+
+fa(nutr_with_age_BOTHDAYS_over_45, nfactors = 2, rotate = "varimax")$loadings
+
+print(fa_result$loadings)
+
+```
+
+```{r grouping_together_red_meats, eval = FALSE}
+red_meat_restructure = nutr_with_age |>
+  filter(AGEC >= 45) |>
+  ungroup() |>
+  select(which(colnames(tech_nutr)=="GRAINS1N") : which(colnames(tech_nutr)=="FRESUG1N")) |>
+  mutate(REDMT_UNPROCESSED = RDMTL1N + RDMTLU1N + RDMTN1N + RDMTNU1N) |>
+  mutate(REDMT_PROCESSED = RDMTNP1N + RDMTLP1N) |>
+  select(-RDMTL1N, -RDMTLU1N, -RDMTN1N, -RDMTNU1N, -RDMTNP1N, -RDMTLP1N) |>
+  scale()
+
+fa_result <- principal(red_meat_restructure, nfactors = 2, rotate = "varimax")
+fa.parallel(red_meat_restructure, fa = "pc", n.iter = 100, show.legend = FALSE)
+
+print(fa_result$loadings)
+```
+
+
+> This is kind of helpful (breaks into roughly healthy & unhealthy groups), but the nutrition data alone doesn't allow us to explore the effect *bad* things like junk food... this data is only really contained in the `tech_food` dataset.
+
+## Retrying with `tech_food` data
+
+Replacing 3 digit food codes with their actual meaning.
+```{r}
+library(stringr)
+fooditems_dict = read.csv("../data/nutmstatDataItems2019_CSV.csv") |>
+  filter(str_length(Category.Code) == 3) |>
+  dplyr::rename("THRDIG" = "Category.Code")
+
+both_days_adults_food <- tech_food |>
+  group_by(ABSPID) |>
+  left_join(y = tech_biom |> select(ABSPID, AGEC), by = "ABSPID") |>
+  filter(n_distinct(DAYNUM) == 2, AGEC >= 45) |>
+  ungroup() |>
+  left_join(fooditems_dict, by = "THRDIG") |>
+  select(ABSPID, Category.Label, GRAMWGT)
+
+head(both_days_adults_food, 10)
+```
+
+
+### Normalisation (converting grams to servings)
+
+Looking at this df, it's clear that directly comparing the grams consumed across different types of food doesn't really make sense. For example, comparing grams of honey with grams of meat doesn't make much sense, because different food items have inherently different serving sizes, caloric densities, and nutritional profiles. 
+
+If we don't standardise the grams within each food label category, the factor analysis may be biased by the average servings for different types of food having large differences in their absolute weight in grams.
+
+> NOTE: This is important to do before grouping variables together (in next section). Otherwise, you're doing stuff like adding up grams of wine with grams of vodka... they mean very different things. Hence, conversion of each food item from grams to servings comes first.
+
+#### Approach 1: Z-score normalisation
+```{r}
+both_days_adults_food_Z_normalised <- both_days_adults_food |>
+  group_by(Category.Label) |> # standardising WITHIN each food group.
+  mutate(Grams_Zscore = (GRAMWGT - mean(GRAMWGT))/sd(GRAMWGT))
+
+head(both_days_adults_food_Z_normalised, 10)
+```
+
+Ok, this is a step in the right direction, but makes interpretation and modelling rly difficult. E.g., if someone has eaten a below-average sized serving of cereal, we definitely don't want to say that they're eating "negative cereal".
+
+#### Approach 2: Creating a "servings" measure based on grams
+Looking at the food data, we can create define "1 serving" as the median grams consumed of a particular item.
+
+From here, we just compute servings as (using tea as an example):
+
+$$\text{Servings(Tea)} = \frac{\text{Recorded tea weight (g)}}{\text{Median tea weight (g)}}$$
+
+By comparing grams to "servings", we can directly compare different types of food consumed, without having to worry about how different foods are usually consumed in different weights.
+
+```{r}
+both_days_adults_food_servings <- both_days_adults_food |>
+  group_by(Category.Label) |> 
+  mutate(median_grams = median(GRAMWGT)) |>
+  mutate(Servings = ifelse(median_grams != 0, GRAMWGT / median_grams, 0)) # sets to 0 if median grams is 0... avoids any divide by 0 errors.
+
+both_days_adults_food_servings$Servings <- format(both_days_adults_food_servings$Servings, scientific = FALSE)
+head(both_days_adults_food_servings, 10)
+```
+
+Done :).
+
+### Grouping categories together
+#### Current state of food labels
+```{r}
+length(unique(both_days_adults_food$Category.Label))
+```
+
+There's 114 different categories identified in the food diary... some of these definitely overlap.
+
+```{r}
+knitr::kable(table(both_days_adults_food$Category.Label))
+```
+
+#### One row per individual 
+
+> Preparing for grouping.
+
+Now, one observation per individual. Each row is sum in grams of consumption of that food over two days.
+
+```{r}
+wide_adults_food_servings = both_days_adults_food_servings |>
+  select(-GRAMWGT, -median_grams) |>
+  mutate(Servings = as.numeric(Servings)) |>
+  group_by(ABSPID, Category.Label) |>
+  summarise(Total_Servings = sum(Servings, na.rm = TRUE), .groups = 'drop') |>
+  pivot_wider(names_from = Category.Label, values_from = Total_Servings, values_fill = 0)
+
+head(wide_adults_food_servings, 10)
+```
+
+#### Grouping food items together with substantial overlap.
+
+Merging together overlapping food items (columns) aids w factor analysis.
+
+**Note:** Relatively niche ingredients with minimal nutritional content (e.g. baking soda, herbs) will be removed.
+
+```{r}
+wide_adults_food_servings_foods_grouped <- wide_adults_food_servings |>
+  # Removing variables with minimal nutritional content and/or rare groups, which don't fit in with anything else.
+  select(-c(
+    `Herbs, spices, seasonings and stock cubes`, # this also includes added salt..? Should be careful.
+    `Essences`,
+    `Stuffings`,
+    `Chemical raising agents and cooking ingredients`,
+    `Infant foods`,
+    `Infant cereal products`,
+    `Formula dietary foods` # kind of raises an eyebrow that there's consumption of infant products for 45+ aged people... Double check data.
+    )) |>
+  # Soups
+  mutate(Soups = rowSums(across(matches("Soup", ignore.case = TRUE)), na.rm = TRUE)) |>
+  select(-matches("Soup"), Soups) |>
+  # Fish
+  mutate(`Fish and Fish Products` = rowSums(across(c(
+    `Other sea and freshwater foods`, 
+    `Crustacea and molluscs (excluding commercially sterile)`, 
+    `Fish and seafood products (homemade and takeaway)`,
+    `Mixed dishes with fish or seafood as the major component`,
+    `Packed (commercially sterile) fish and seafood`,
+    `Fin fish (excluding commercially sterile)`
+    )), na.rm = TRUE)) |>
+  select(-c(
+    `Other sea and freshwater foods`, 
+    `Crustacea and molluscs (excluding commercially sterile)`, 
+    `Fish and seafood products (homemade and takeaway)`,
+    `Mixed dishes with fish or seafood as the major component`,
+    `Packed (commercially sterile) fish and seafood`,
+    `Fin fish (excluding commercially sterile)`)) |>
+  # Fruit
+  mutate(`Fresh Fruit and Fruit-based Dishes` = rowSums(across(c(
+    `Berry fruit`, 
+    `Stone fruit`,
+    `Citrus fruit`,
+    `Other fruit`,
+    `Pome fruit`,
+    `Tropical and subtropical fruit`,
+    `Mixtures of two or more groups of fruit`
+    )))) |>
+  select(-`Berry fruit`, -`Stone fruit`, -`Citrus fruit`, -`Other fruit`, -`Pome fruit`, -`Tropical and subtropical fruit`, -`Mixtures of two or more groups of fruit`) |>
+  # Fruit and muesli bars
+  mutate(`Fruit and Muesli-style bars` = rowSums(across(c(
+    `Fruit, nut and seed-bars`,
+    `Muesli or cereal style bars`)))) |>
+  select(-c(`Fruit, nut and seed-bars`, 
+            `Muesli or cereal style bars`)) |>
+  # Cordials and soft drink
+  mutate(`Soft drinks, Cordials, Sports drinks, and Milkshakes` = rowSums(across(c(
+    `Soft drinks, and flavoured mineral waters`, 
+    `Cordials`, 
+    `Flavoured milks and milkshakes`, 
+    `Electrolyte, energy and fortified drinks`)))) |>
+  select(-c(`Soft drinks, and flavoured mineral waters`, 
+            `Cordials`, 
+            `Flavoured milks and milkshakes`, 
+            `Electrolyte, energy and fortified drinks`)) |>
+  # Desserts
+  mutate(`Milk-based and other dessert items` = rowSums(across(c(
+    `Other dishes where milk or a milk product is the major component`, 
+    `Sweet biscuits`, 
+    `Frozen milk products`, 
+    `Dishes and products other than confectionery where sugar is the major component`, 
+    `Custards`,
+    `Soy-based ice confection`,
+    `Batter-based products`,
+    `Mixed dishes where fruit is the major component`,
+    `Cakes, muffins, scones, cake-type desserts`)))) |>
+  select(-c(`Other dishes where milk or a milk product is the major component`, 
+            `Sweet biscuits`, 
+            `Frozen milk products`, 
+            `Dishes and products other than confectionery where sugar is the major component`,
+            `Mixed dishes where fruit is the major component`,
+            `Custards`, `Soy-based ice confection`, `Batter-based products`, `Cakes, muffins, scones, cake-type desserts`)) |>
+  # Chocolate and lollies
+  mutate(`Chocolate and lollies` = rowSums(across(c(
+    `Chocolate and chocolate-based confectionery`, 
+    `Other confectionery`)))) |>
+  select(-c(`Chocolate and chocolate-based confectionery`, 
+            `Other confectionery`)) |>
+  # Butters, margarines, and oils
+  mutate(`Butters, margarines, and oils` = rowSums(across(c(
+    `Butters`,
+    `Margarine and table spreads`, 
+    `Plant oils`,
+    `Unspecified fats`,
+    `Dairy blends`,
+    `Other fats`)))) |>
+  select(-c(`Butters`, `Margarine and table spreads`, `Plant oils`, `Unspecified fats`, `Dairy blends`, `Other fats`)) |>
+  # Sauces
+  mutate(`Sauces` = rowSums(across(c(`Gravies and savoury sauces`, `Salad dressings`)))) |>
+  select(-c(`Gravies and savoury sauces`, `Salad dressings`)) |>
+  # Coffee and Tea
+  mutate(`Coffee and Tea` = rowSums(across(c(`Coffee and coffee substitutes`, `Tea`)))) |>
+  select(-c(`Coffee and coffee substitutes`, `Tea`)) |>
+  # Starchy snacks
+  mutate(`Starchy snacks` = rowSums(across(c(
+    `Extruded or reformed snacks`,
+    `Other snacks`,
+    `Corn snacks`,
+    `Potato snacks`
+    )))) |>
+  select(-c(
+    `Extruded or reformed snacks`,
+    `Other snacks`,
+    `Corn snacks`,
+    `Potato snacks`)) |>
+  # Alcohol
+  mutate(`Alcohol` = rowSums(across(c(
+    `Wines`,
+    `Beers`,
+    `Spirits`,
+    `Cider and perry`,
+    `Other alcoholic beverages`
+  )))) |>
+  select(-c(
+    `Wines`,
+    `Beers`,
+    `Spirits`,
+    `Cider and perry`,
+    `Other alcoholic beverages`
+  )) |>
+  # Legumes
+  mutate(`Legumes and pulses` = rowSums(across(c(
+    `Peas and beans`,
+    `Mature legumes and pulses`,
+    `Mature legume and pulse products and dishes`
+  )))) |>
+  select(-c(
+    `Peas and beans`,
+    `Mature legumes and pulses`,
+    `Mature legume and pulse products and dishes`
+  )) |>
+  # Breakfast cereal and porridge
+  mutate(`Breakfast cereal and porridge` = rowSums(across(c(
+    `Breakfast cereals, ready to eat`,
+    `Breakfast cereals, hot porridge style`
+  )))) |>
+  select(-c(
+    `Breakfast cereals, ready to eat`,
+    `Breakfast cereals, hot porridge style`)) |>
+  # Cheese, yogurts
+  mutate(`Cheese, yogurt, cream` = rowSums(across(c(
+    `Cheese`,
+    `Yoghurt`,
+    `Cream`
+  )))) |>
+  select(-c(
+    `Cheese`,
+    `Yoghurt`,
+    `Cream`
+  )) |>
+  # Processed meat
+  mutate(`Processed meats` = rowSums(across(c(
+    `Processed meat`,
+    `Sausages, frankfurts and saveloys`
+  )))) |>
+  select(-c(
+    `Processed meat`,
+    `Sausages, frankfurts and saveloys`
+  )) |>
+  # Red meat, unprocessed
+  mutate(`Red meat, unprocessed` = rowSums(across(c(
+    `Beef, sheep and pork, unprocessed`,
+    `Mammalian game meats`,
+  )))) |>
+  select(-c(
+    `Beef, sheep and pork, unprocessed`,
+    `Mammalian game meats`,
+  )) |>
+  # Eggs and egg dishes
+  mutate(`Eggs and egg dishes` = rowSums(across(c(
+    `Eggs`,
+    `Dishes where egg is the major ingredient`,
+  )))) |>
+  select(-c(
+    `Eggs`,
+    `Dishes where egg is the major ingredient`,
+  ))
+
+# This is actually quite annoying... `mixed dishes where cereal is main component` includes sandwiches, sushi, pizza, etc... 
+
+## Testing
+```
+
+> Results of variable merging (so far).
+
+```{r}
+colnames(wide_adults_food_servings_foods_grouped)
+wide_adults_food_servings_foods_grouped
+#wide_adults_food_grams |> select(matches("fish", ignore.case = TRUE))
+```
+
+
+### Running factor analysis on grouped data
+
+```{r}
+fa_grouped_result = fa(wide_adults_food_servings_foods_grouped |> select(-ABSPID) |> scale(), fm = "pa", nfactors = 2, rotate = "varimax")
+fa_grouped_loadings = fa_grouped_result$loadings
+
+data.frame(group_1 = fa_grouped_result$loadings[,1], group_2 = fa_grouped_result$loadings[,2]) |>
+  mutate(group_1 = ifelse(abs(group_1) >= 0.15, group_1, " ")) |>
+  mutate(group_2 = ifelse(abs(group_2) >= 0.15, group_2, " ")) |>
+  knitr::kable() |> kableExtra::kable_material()
+
+# scree plot
+fa.parallel(wide_adults_food_servings_foods_grouped |> select(-ABSPID) |> scale(), fm = "pa")
+
+# Now, use factor analysis scores for regression.
+fa_scores = fa_grouped_result$scores
+fa_scores_w_ids = data.frame(ABSPID = wide_adults_food_servings_foods_grouped$ABSPID, fa_scores)
+
+merged_with_biom_dat = merge(tech_biom, fa_scores_w_ids, by = "ABSPID")
+
+summary(lm(PHDCMWBC ~ PA1 + PA2, data = merged_with_biom_dat))
+```
+
+### Running PCA on Grouped Data (Andrew's Part)
+
+```{r}
+library(kableExtra)
+library(visdat)
+library(nnet)
+library(quantreg)
+library(GGally)
+library(reshape2)
+library(effects)
+library(dotwhisker)
+library(broom)
+library(psych)
+
+fa.parallel(wide_adults_food_servings_foods_grouped |> select(-ABSPID)|> scale(), fa = "pc", n.iter = 100, main = "Parallel Analysis")
+PCA_grouped_result = principal(wide_adults_food_servings_foods_grouped |> select(-ABSPID)|> scale(), nfactors = 4, rotate="varimax")
+
+# Creatning a Scree plot to find optimal K for k-means
+
+principal_loadings <- as.data.frame(unclass(PCA_grouped_result$loadings))
+# Apply the threshold: if abs(value) < 0.1, set it to 0
+principal_loadings[abs(principal_loadings) < 0.1] <- 0
+principal_loadings
+
+pca_scores <- PCA_grouped_result$scores
+pca_scores
+
+# Making a df to be used for regression
+kable(as.data.frame(ifelse(abs(PCA_grouped_result$loadings) < 0.1, 0, PCA_grouped_result$loadings)), 
+      caption = "Principal Components Loadings")
+
+pca_scores = PCA_grouped_result$scores
+pca_scores_w_id = data.frame(ABSPID = wide_adults_food_servings_foods_grouped$ABSPID, pca_scores)
+pca_merged_with_biom_dat = merge(tech_biom, pca_scores_w_id, by = "ABSPID")
+pca_merged_with_dat = merge(tech_nutr, pca_merged_with_biom_dat, by="ABSPID")
+pca_merged_with_dat$ENERGTOT <- pca_merged_with_dat$ENERGYT1 + pca_merged_with_dat$ENERGYT2
+
+
+# Visualizing Missingness
+missingness_table <- pca_merged_with_dat %>%
+  summarise_all(~ mean(is.na(.)) * 100) %>%
+  gather(key = "variable", value = "missing_pct") %>%
+  arrange(desc(missing_pct))
+
+# View the missingness table
+print(missingness_table)
+
+
+
+# Cleaning the Data
+# Two step process: 
+#   First is to remove variables with more than 44% missing data
+#   Second is to remove any observations with missing data
+missing_percentage <- colMeans(is.na(pca_merged_with_dat)) * 100
+filtered_data <- pca_merged_with_dat[, (missing_percentage < 44) | (names(pca_merged_with_dat) == "DIAHBRSK") | (names(pca_merged_with_dat) == "GLUCFPD")]
+cleaned_pca_merged <- na.omit(filtered_data)
+cleaned_pca_merged <- droplevels(cleaned_pca_merged)
+
+# Plot Functions
+plot_lm_model <- function(formula, data, dependent_var_name) {
+  # Fit the model
+  model <- lm(formula, data = data)
+  # Predicted vs Actual Plot
+  predicted <- predict(model)
+  actual <- data[[dependent_var_name]]  # Access the actual dependent variable
+  
+  # Plot Predicted vs Actual
+  plot(actual, predicted, 
+       main = paste("Predicted vs Actual for", dependent_var_name), 
+       xlab = "Actual", 
+       ylab = "Predicted")
+  abline(0, 1, col = "red")
+  
+  # Residuals vs Fitted Plot
+  plot(model, which = 1, main = paste("Residuals vs Fitted for", dependent_var_name))
+  
+  # Return the model summary for further inspection
+  summary(model)$r.squared
+  return(summary(model))
+}
+
+plot_quantile_regression_model <- function(formula, null_formula, data, dependent_var_name, tau = 0.5) {
+  # Fit the quantile regression model
+  model <- rq(formula, data = data, tau = tau)  # tau is the quantile level (default to median, i.e., 0.5)
+  
+  # Predicted vs Actual Plot
+  predicted <- predict(model)
+  actual <- data[[dependent_var_name]]  # Access the actual dependent variable
+  
+  # Plot Predicted vs Actual
+  plot(actual, predicted, 
+       main = paste("Predicted vs Actual for", dependent_var_name, "Quantile:", tau), 
+       xlab = "Actual", 
+       ylab = "Predicted")
+  abline(0, 1, col = "red")
+  
+  # Residuals vs Fitted Plot
+  residuals <- actual - predicted
+  plot(predicted, residuals, 
+       main = paste("Residuals vs Fitted for", dependent_var_name, "Quantile:", tau),
+       xlab = "Fitted", 
+       ylab = "Residuals")
+  abline(h = 0, col = "red")
+  
+  # Making The Pseudo-R^2
+  null_model <- rq(null_formula, data=data, tau=tau)
+  resid_model <- sum(abs(residuals(model)))
+  resid_null <- sum(abs(residuals(null_model)))
+  
+  pseudo_r2 <- 1 - (resid_model / resid_null)  # Pseudo-R² computation
+  
+  cat("Pseudo R-squared for quantile", tau, ":", pseudo_r2, "\n")
+  # Return the model summary for further inspection
+  return(summary(model))
+}
+
+multinom_logit_visualization <- function(formula, data, plot_type = c("coefficients", "probabilities", "marginal")) {
+  
+  # Fit the multinomial model
+  model <- multinom(formula, data = data)
+  
+  # Switch based on plot type
+  plot_type <- match.arg(plot_type)
+  
+  if (plot_type == "coefficients") {
+    # Tidy the model for coefficient plot
+    coef_df <- tidy(model)
+    # Plot coefficients
+    p <- dwplot(coef_df) + 
+      theme_minimal() +
+      labs(title = "Coefficient Plot for Multinomial Logistic Regression",
+           x = "Estimate", y = "Variable")
+    print(p)
+  
+  } else if (plot_type == "probabilities") {
+    # Create new data for prediction
+    predictors <- all.vars(formula)[2]  # Get the predictor variables from formula
+    newdata <- expand.grid(lapply(data[predictors], function(x) seq(min(x), max(x), length.out = 100)))
+    
+    # Get predicted probabilities
+    pred_probs <- predict(model, newdata = newdata, type = "probs")
+    
+    # Melt predicted probabilities for plotting
+    pred_probs_melt <- melt(data.frame(newdata, pred_probs), id.vars = predictors)
+    
+    # Plot predicted probabilities
+    p <- ggplot(pred_probs_melt, aes_string(x = names(newdata)[1], y = "value", color = "variable")) +
+      geom_line() +
+      theme_minimal() +
+      labs(title = "Predicted Probabilities from Multinomial Logistic Regression",
+           x = names(newdata)[1], y = "Probability", color = "Outcome")
+    print(p)
+    
+  } else if (plot_type == "marginal") {
+    # Plot marginal effects
+    plot(allEffects(model))
+  }
+}
+
+plot_multinom_model <- function(formula, data, outcome_var_name) {
+  # Fit the multinomial logistic regression model
+  model <- multinom(formula, data = data)
+  
+  # Get predicted probabilities
+  pred_probs <- predict(model, type = "probs")
+  
+  # Convert to dataframe for plotting
+  pred_probs_df <- data.frame(pred_probs)
+  pred_probs_df$RC1 <- data$RC1  # Adjust if RC1 is not the predictor of interest
+  
+  # Get the levels of the outcome variable
+  outcome_levels <- levels(as.factor(data[[outcome_var_name]]))  # Ensure it's treated as a factor
+  
+  # Initialize list to store plots
+  plot_list <- list()
+  
+  # Loop through each outcome level and plot the predicted probabilities
+  for (i in 1:length(outcome_levels)) {
+    # Access the column corresponding to the outcome level
+    col_name <- colnames(pred_probs_df)[i]
+    
+    gg <- ggplot(pred_probs_df, aes(x = RC1)) +
+      geom_line(aes(y = .data[[col_name]], color = outcome_levels[i])) +  # Use the correct column dynamically
+      labs(title = paste("Predicted Probabilities for", outcome_var_name, "-", outcome_levels[i]), 
+           y = "Predicted Probability", x = "RC1") +
+      theme_minimal()
+    
+    plot_list[[i]] <- gg
+  }
+  
+  # Return the first plot and print model summary (can be modified to show all plots)
+  print(plot_list[[1]])  # You can loop through plot_list to print all
+  
+  return(summary(model))
+}
+
+# Apply the linear regression function to all lm models
+plot_lm_model(PHDCMWBC ~ RC1 + RC2 + RC3 + RC4 + RC5 + ENERGTOT,  cleaned_pca_merged, "PHDCMWBC")  # Waist Circumference
+plot_lm_model(SYSTOL ~ RC1 + RC2 + RC3 + RC4 + RC5 + ENERGTOT,  cleaned_pca_merged, "SYSTOL")  # Waist Circumference
+plot_quantile_regression_model(PHDCMWBC ~ RC1 + RC2 + RC3 + RC4 + RC5 + ENERGTOT, PHDCMWBC ~ 1, cleaned_pca_merged, "PHDCMWBC")  # Waist Circumference
+plot_lm_model(PHDKGWBC ~ RC1 + RC2 + RC3 + RC4 + RC5, cleaned_pca_merged, "PHDKGWBC")  # Weight
+plot_lm_model(SYSTOL ~ RC1 + RC2 + RC3 + RC4 + RC5, cleaned_pca_merged, "SYSTOL")      # Systolic Blood Pressure
+plot_lm_model(DIASTOL ~ RC1 + RC2 + RC3 + RC4 + RC5, cleaned_pca_merged, "DIASTOL")    # Diastolic Blood Pressure
+plot_lm_model(SLPTIME ~ RC1 + RC2 + RC3 + RC4 + RC5, cleaned_pca_merged, "SLPTIME")    # Sleep Time
+plot_lm_model(ADTOTSE ~ RC1 + RC2 + RC3 + RC4 + RC5, cleaned_pca_merged, "ADTOTSE")    # Time spent being stationary
+
+
+# Apply the multinomial regression function to all multinom models
+plot_multinom_model(SF2SA1QN ~ RC1 + RC2 + RC3 + RC4 + RC5, cleaned_pca_merged_with_biom, "SF2SA1QN")  # Socioeconomic Status
+multinom_logit_visualization(SF2SA1QN ~ RC1 + RC2 + RC3 + RC4 + RC5, cleaned_pca_merged, plot_type = "coefficients")
+plot_multinom_model(INCDEC ~ RC1 + RC2 + RC3 + RC4 + RC5, cleaned_pca_merged_with_biom, "INCDEC")        # Equivalised income of household
+plot_multinom_model(DIAHBRSK ~ RC1 + RC2 + RC3 + RC4 + RC5, cleaned_pca_merged, "DIAHBRSK") # Diabetes
+plot_multinom_model(HYPBC ~ RC1 + RC2 + RC3 + RC4 + RC5, cleaned_pca_merged_with_biom, "HYPBC")          # Hypertensive Disease
+
+# GLUCFPD
+#
+
+multinom_model <- multinom(GLUCFPD ~ RC1 + RC2 + RC3 + RC4, data = cleaned_pca_merged) 
+multinom_model <- multinom(DIAHBRSK ~ RC1 + RC2 + RC3 + RC4, data = cleaned_pca_merged)
+ordinal_model <- polr(DIAHBRSK ~ RC1 + RC2 + RC3 + RC4, data = cleaned_pca_merged, Hess = TRUE)
+summary(ordinal_model)
+coeftest(ordinal_model)
+summary(multinom_model)
+
+# Extract coefficients and standard errors
+coef_table <- summary(multinom_model)$coefficients
+std_err_table <- summary(multinom_model)$standard.errors
+
+# Calculate z-values
+z_values <- coef_table / std_err_table
+
+# Calculate p-values (two-tailed test)
+p_values <- 2 * (1 - pnorm(abs(z_values)))
+
+# Display z-values and p-values
+z_values
+p_values
+
+
+
+
+```
+
+
+Promising results! Unhealthy group (group 1) has generally lower consumption of veg and fruit, higher consumption of junk food, etc. This group was positively correlated with waist circumference (p<0.05).
+
+### Next steps:
+
+**Finding out more about factor analysis (vs PCA):**
+- What's actually the difference between factor analysis using `psych::fa(fm = "pa")` (i.e. factor analysis by the principal component method) and `psych::principal()`?
+
+-- The goal of psych::principal() is to find the principal component that explains the greatest variance, not to explain the common variance.
+-- psych::fa(fm = "pa") is a factor analysis based on the principal axis factoring method, which focuses on the common variance between explanatory variables.
+
+**Is explaining a low proportion of the variance in factor analysis a problem?**
+- There's still a lot of work to be done in grouping similar food items together, but currently, the proportion of variance explained by the 2 factors is really low (like 2% each).
+- The authors of the paper we were looking at [here](https://www.mdpi.com/2072-6643/7/8/5295#B17-nutrients-07-05295) had similar results, though, and didn't think it was a problem for their use case.
+- Would be worth asking in class about, or doing our own research into.
+
+In most cases, the factors of factor analysis should explain enough variance to ensure that the extracted factors are of realistic significance. I looked at a few other papers and they said, "the proportion of variance explained by the 2 factors", maybe 50%, 2% could be bit less. In my opinion, if the situation permits, we may conduct correlation analysis first when selecting factors If it's possible, which may make variance greater.
+
+**Controlling for confounders**:
+- Try refitting the model, but adding total energy (kJ) consumed as a predictor.
+- You'll have to get this data from `tech_nutr` I believe, and join it with the dataset before modelling.
+- Worth adding other confounders too. Again, [this paper](https://www.mdpi.com/2072-6643/7/8/5295#B17-nutrients-07-05295) had some good examples of different confounders they fitted inside the model so they could control for their effect.
+    - What difference does this make to $R^2$?
+    
+    
+    
+
