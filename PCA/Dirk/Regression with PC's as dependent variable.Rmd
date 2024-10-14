@@ -1,0 +1,18 @@
+---
+title: "Regression with PC's as dependent variable"
+author: '510646291'
+date: "2024-10-10"
+output: html_document
+---
+```{r}
+library(tidyverse)
+library(knitr)
+
+load("../PCA_results.RData")
+load("../../data/tech_data.Rdata")
+```
+
+```{r}
+
+```
+
