@@ -4,15 +4,58 @@ author: '510646291'
 date: "2024-10-10"
 output: html_document
 ---
+
+## Load data and Flynn's work
+
 ```{r}
 library(tidyverse)
 library(knitr)
-
-load("../PCA_results.RData")
-load("../../data/tech_data.Rdata")
+library(here)
+library(MASS)
+i_am("wide_adults_food_servings_foods_grouped.RData")
+load(here("wide_adults_food_servings_foods_grouped.RData"))
+load(here("PCA_results.RData"))
+load(here("..","data","tech_data.RData"))
 ```
+
+## Data management
 
 ```{r}
-
+plot(pca_result,type = "l")
+pc.df <- as.data.frame(pca_result$x) %>% select(paste0("PC",1:5))
+combined.df1 <- cbind(pc.df,wide_adults_food_servings_foods_grouped) %>% select(ABSPID,paste0("PC",1:5))
+combined.df2 <- left_join(combined.df1,tech_biom,by="ABSPID")
 ```
 
+## Data cleaning
+
+```{r}
+str(combined.df2)
+clean.df1 <- combined.df2 %>% mutate(
+  BMISC = na_if(BMISC,0) %>% na_if(98) %>% na_if(99),
+  AGEC = na_if(AGEC,99),
+  SMSBC = na_if(SMSBC,"0"),
+  FEMLSBC = na_if(FEMLSBC,"6")%>% na_if("9"),
+  PHDKGWBC = na_if(PHDKGWBC,997)%>% na_if(998)%>% na_if(999),
+  PHDCMHBC = na_if(PHDKGWBC,998)%>% na_if(999),
+  EXLWTBC = na_if(EXLWTBC,"9999")%>% na_if("0"),
+  EXLWMBC = na_if(EXLWMBC,"9999")%>% na_if("0"),
+  EXLWVBC = na_if(EXLWVBC,"9999")%>% na_if("0"),
+  PHDCMWBC = na_if(PHDCMWBC,998)%>% na_if(999),
+  SF2SA1QN = na_if(SF2SA1QN,"99"),
+  INCDEC  = na_if(INCDEC,"0")%>% na_if("99")%>% na_if("98"),
+  DIETRDI = na_if(DIETRDI,"0")
+)
+```
+
+## Variable selection
+
+```{r}
+dim(clean.df4)
+str(clean.df4)
+
+lm.pc1 <- lm(PC1 ~ AGEC+BIORESPC,data=clean.df4[,c(2,7:99)])
+dim(clean.df4)
+table(clean.df4$BIORESPC)
+
+```
