@@ -325,10 +325,11 @@ plot(pca_result, type = "l")
 
 There's approx. 4 PC's with eigenvalue > 1.5.
 
-#### Saving PCA data
+#### Saving PCA and food serving data
 
 ```{r}
 save(pca_result, file = "PCA_results.RData")
+save(wide_adults_food_servings_foods_grouped,file = "wide_adults_food_servings_foods_grouped.RData")
 ```
 
 
