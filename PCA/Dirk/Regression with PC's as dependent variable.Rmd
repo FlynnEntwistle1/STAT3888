@@ -20,42 +20,112 @@ load(here("..","data","tech_data.RData"))
 
 ## Data management
 
+We combined PCA results with clinical outcomes.
+
 ```{r}
 plot(pca_result,type = "l")
-pc.df <- as.data.frame(pca_result$x) %>% select(paste0("PC",1:5))
-combined.df1 <- cbind(pc.df,wide_adults_food_servings_foods_grouped) %>% select(ABSPID,paste0("PC",1:5))
+pc.df <- as.data.frame(pca_result$x) %>% dplyr::select(paste0("PC",1:5))
+combined.df1 <- cbind(pc.df,wide_adults_food_servings_foods_grouped) %>% dplyr::select(ABSPID,paste0("PC",1:5))
 combined.df2 <- left_join(combined.df1,tech_biom,by="ABSPID")
 ```
 
 ## Data cleaning
 
+Data cleaning includes the following steps:
+
+- set our of range values to missing
+- drop variables with missingness greater than 30%
+- only keep complete cases for next regression step
+
+Clean data contain 2705 samples with 5 PCs and 33 clinical outcomes.
+
 ```{r}
-str(combined.df2)
 clean.df1 <- combined.df2 %>% mutate(
-  BMISC = na_if(BMISC,0) %>% na_if(98) %>% na_if(99),
-  AGEC = na_if(AGEC,99),
-  SMSBC = na_if(SMSBC,"0"),
-  FEMLSBC = na_if(FEMLSBC,"6")%>% na_if("9"),
-  PHDKGWBC = na_if(PHDKGWBC,997)%>% na_if(998)%>% na_if(999),
-  PHDCMHBC = na_if(PHDKGWBC,998)%>% na_if(999),
-  EXLWTBC = na_if(EXLWTBC,"9999")%>% na_if("0"),
-  EXLWMBC = na_if(EXLWMBC,"9999")%>% na_if("0"),
-  EXLWVBC = na_if(EXLWVBC,"9999")%>% na_if("0"),
-  PHDCMWBC = na_if(PHDCMWBC,998)%>% na_if(999),
-  SF2SA1QN = na_if(SF2SA1QN,"99"),
-  INCDEC  = na_if(INCDEC,"0")%>% na_if("99")%>% na_if("98"),
-  DIETRDI = na_if(DIETRDI,"0")
+  BMISC = na_if(as.numeric(BMISC), 0) %>% na_if(98) %>% na_if(99),
+  AGEC = na_if(as.numeric(AGEC), 99),
+  SMSBC = na_if(as.character(SMSBC), "0"),
+  FEMLSBC = na_if(as.character(FEMLSBC), "6") %>% na_if("9"),
+  PHDKGWBC = na_if(as.numeric(PHDKGWBC), 997) %>% na_if(998) %>% na_if(999),
+  PHDCMHBC = na_if(as.numeric(PHDCMHBC), 998) %>% na_if(999),
+  EXLWTBC = na_if(as.numeric(EXLWTBC), 9999) %>% na_if(0),
+  EXLWMBC = na_if(as.numeric(EXLWMBC), 9999) %>% na_if(0),
+  EXLWVBC = na_if(as.numeric(EXLWVBC), 9999) %>% na_if(0),
+  PHDCMWBC = na_if(as.numeric(PHDCMWBC), 998) %>% na_if(999),
+  SF2SA1QN = na_if(as.character(SF2SA1QN), "99"),
+  INCDEC  = na_if(as.character(INCDEC), "0") %>% na_if("99") %>% na_if("98"),
+  DIETRDI = na_if(as.character(DIETRDI), "0")
 )
+
+missing_pct <- clean.df1 %>% 
+  summarise(across(everything(), ~mean(is.na(.)))) 
+clean.df2 <- clean.df1 %>% 
+  dplyr::select(where(~mean(is.na(.)) <= 0.3))
+clean.df3 <- clean.df2[complete.cases(clean.df2), ]
+
+clean.df4 <- clean.df3 %>%
+  mutate(across(ends_with("_MISS"), ~ {
+    factor_var <- as.factor(.)
+    if (nlevels(factor_var) <= 1) {
+      return(NULL)
+    } else {
+      return(factor_var)
+    }
+  }))
+dim(clean.df4)
 ```
 
-## Variable selection
+## Variable selection and regression summary
+
+We used a stepwise method with both directions to select variables that are associated with PCs
+
+```{r,include=F}
+lm.pc1 <- lm(PC1 ~ .,data=clean.df4[,c(2,7:39)])
+lm.pc2 <- lm(PC2 ~ .,data=clean.df4[,c(3,7:39)])
+lm.pc3 <- lm(PC3 ~ .,data=clean.df4[,c(4,7:39)])
+lm.pc4 <- lm(PC4 ~ .,data=clean.df4[,c(5,7:39)])
+lm.pc5 <- lm(PC5 ~ .,data=clean.df4[,c(6,7:39)])
+
+step1 <- step(lm.pc1,direction = "both")
+step2 <- step(lm.pc2,direction = "both")
+step3 <- step(lm.pc3,direction = "both")
+step4 <- step(lm.pc4,direction = "both")
+step5 <- step(lm.pc5,direction = "both")
+```
+Variables associated with PCs are listed below:
+
+- PC1: AGEC, COBBC + PHDKGWBC + PHDCMHBC + EXLWVBC +  SF2SA1QN + BDYMSQ04 + DIETQ5 + DIETQ8 + DIETRDI + SEX + SMKDAILY +  SYSTOL + BIORESPC
+
+- PC2:
+
+- PC3:
+
+- PC4:
+
+- PC5:
 
 ```{r}
-dim(clean.df4)
-str(clean.df4)
+summary(step1)
+```
 
-lm.pc1 <- lm(PC1 ~ AGEC+BIORESPC,data=clean.df4[,c(2,7:99)])
-dim(clean.df4)
-table(clean.df4$BIORESPC)
+describe variables from model 1 that are associated with PC1
 
+```{r}
+summary(step2)
+```
+
+describe variables from model 2 that are associated with PC2
+
+
+```{r}
+summary(step3)
+```
+
+
+```{r}
+summary(step4)
+```
+
+
+```{r}
+summary(step5)
 ```
