@@ -28,6 +28,7 @@ pc.df <- as.data.frame(pca_result$x) %>% dplyr::select(paste0("PC",1:5))
 combined.df1 <- cbind(pc.df,wide_adults_food_servings_foods_grouped) %>% dplyr::select(ABSPID,paste0("PC",1:5))
 combined.df2 <- left_join(combined.df1,tech_biom,by="ABSPID")
 ```
+From this graph, it seems that analyzing the first five PCS is enough."combined.df2" will be the data to analyse.
 
 ## Data cleaning
 
@@ -93,39 +94,77 @@ step5 <- step(lm.pc5,direction = "both")
 ```
 Variables associated with PCs are listed below:
 
-- PC1: AGEC, COBBC + PHDKGWBC + PHDCMHBC + EXLWVBC +  SF2SA1QN + BDYMSQ04 + DIETQ5 + DIETQ8 + DIETRDI + SEX + SMKDAILY +  SYSTOL + BIORESPC
+- PC1: 0.021938AGEC, -0.780173COBBC3 + 0.006192PHDKGWBC + 0.009589PHDCMHBC + -0.00396EXLWVBC +  -0.350385SF2SA1QN4 + -0.364374SF2SA1QN5+ 0.536230BDYMSQ042 +  0.431977BDYMSQ045+ 0.853609DIETQ56 +0.212464DIETQ53 + 0.262575DIETQ54 +  -0.191842 DIETQ82+ -0.314453DIETQ83+ -0.588822DIETQ85 + 0.283527DIETRDI2 + -0.435377SEX2 + -0.248077SMKDAILY3 +  0.002282SYSTOL + 0.100796BIORESPC2 -3.671429
 
-- PC2:
-
-- PC3:
-
-- PC4:
-
-- PC5:
-
+Explanation: AGEC - Age of person 
+             COBBC3 - Country of birth (No English speaking as main country)
+             PHDKGWBC - Measured weight (kg)
+             PHDCMHBC - Measured height (cm)
+             EXLWVBC - Total mins undertaken physical activity in last week
+             SF2SA1QN4 -  Decile 4th Index of Relative Socio-Economic Disadvantage
+             SF2SA1QN5 - Decile 5th Index of Relative Socio-Economic Disadvantage
+             BDYMSQ042 - Currently on a diet for health reasons
+             BDYMSQ045 - Not currently on a diet
+             DIETQ56 - Usual daily 6 or more serves serves of vegetables
+             DIETQ53 - Usual daily 3 serves serves of vegetables
+             DIETQ54 - Usual daily 4 serves serves of vegetables
+             DIETQ82 - Usual daily 2 serves of fruit
+             DIETQ83 - Usual daily 3 serves of fruit
+             DIETQ85 - Usual daily 5 serves of fruit
+             DIETRDI2 - vegetable and fruit consumption did no met recommended dietary guidelines
+             SEX2 -  Female
+             SMKDAILY3 - Past daily smoker (ex-smoker)
+             SYSTOL - Systolic blood pressure
+             BIORESPC2 - Biomedical participant
 ```{r}
 summary(step1)
 ```
 
-describe variables from model 1 that are associated with PC1
+- PC2: -0.0205580BMISC +  0.0061739AGEC + 0.0824003SMSBC2 + 0.3713002COBBC3 + 0.0017931EXLWTBC + 0.0053164EXLWVBC + 
+    + -0.2089820BDYMSQ045 + 0.3406298DIETQ53+ 0.5353456DIETQ54+  0.9634038DIETQ55+ 1.5891992DIETQ56 + 0.4033966DIETQ82+ 0.4256818DIETQ83+ 0.6709792DIETQ84+ 0.7098542DIETQ85+ 1.1540151DIETQ86+ 0.3266059DIETRDI2 + 0.1425943SEX2 + 0.7894439SMKDAILY2 +  0.2904375SMKDAILY3+ 0.3630767SMKDAILY4+ 0.3094551SMKDAILY5 + 1.0603718
+    
+Explanation: BMISC - Body mass index (BMI)
+             AGEC - Age of person
+             SMSBC2 - Married in a de facto marriage
+             COBBC3 - Country of birth (No English speaking as main country)
+             EXLWTBC - Total mins undertaken physical activity in last week
+             EXLWVBC - Total mins undertaken vigorous physical activity in last week
+             BDYMSQ045 - Not currently on a diet
+             DIETQ53 - Usual daily 3 serves of vegetables
+             DIETQ54 - Usual daily 4 serves of vegetables
+             DIETQ55 - Usual daily 5 serves of vegetables
+             DIETQ56 - Usual daily 6 serves of vegetables
+             DIETQ82 - Usual daily 2 serves of fruit
+             DIETQ83 - Usual daily 3 serves of fruit
+             DIETQ84 - Usual daily 4 serves of fruit
+             DIETQ85 - Usual daily 5 serves of fruit
+             DIETQ86 - Usual daily 6 or more serves of fruit
+             DIETRDI2 - vegetable and fruit consumption did no met recommended dietary guidelines 
+             SEX2 -  Female
+             SMKDAILY2 - Past daily smoker (still smokes)
+             SMKDAILY3 - Past daily smoker (ex-smoker)
+             SMKDAILY4 - Never smoked daily
+             SMKDAILY5 - Never smoked
 
 ```{r}
 summary(step2)
 ```
-
-describe variables from model 2 that are associated with PC2
-
-
+- PC3: BMISC + AGEC + SMSBC + PHDKGWBC + EXLWTBC + 
+    EXLWVBC + PHDCMWBC + INCDEC + DIABBC + DIETQ5 + DIETQ8 + 
+    DIETRDI + SLPTIME + SMKDAILY + BIORESPC
 ```{r}
 summary(step3)
 ```
 
-
 ```{r}
 summary(step4)
 ```
-
+- PC4: SMSBC + COBBC + PHDCMHBC + EXLWMBC + EXLWVBC + 
+    PHDCMWBC + INCDEC + DIABBC + HCHOLBC + DIETQ8 + SEX + BIORESPC
 
 ```{r}
 summary(step5)
 ```
+
+- PC5:  BMISC + AGEC + COBBC + PHDCMHBC + EXLWTBC + 
+    PHDCMWBC + HSUGBC + ADTOTSE + BDYMSQ04 + DIETQ5 + SEX
