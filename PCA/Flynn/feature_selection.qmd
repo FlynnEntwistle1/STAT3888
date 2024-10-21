@@ -1,0 +1,8 @@
+
+
+```{r}
+food_serves_dat <- readRDS('../wide_adults_food_servings_foods_grouped.rds')
+
+fit <- glmulti(mpg ~ ., data = food_serves_dat, method = "h", crit = "aic", level = 1, fitfunction = "lm")
+```
+

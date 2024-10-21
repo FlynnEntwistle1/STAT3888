@@ -70,7 +70,7 @@ complex_group_splits <- both_days_adults_food |>
 
 
 ### Creating a "servings" measure based on grams
-Looking at the food data, we can create define "1 serving" as the median grams consumed of a particular item.
+Looking at the food data, we can define "1 serving" as the median grams consumed of a particular item.
 
 From here, we just compute servings as (using tea as an example):
 
@@ -78,14 +78,15 @@ $$\text{Servings(Tea)} = \frac{\text{Recorded tea weight (g)}}{\text{Median tea 
 
 By comparing grams to "servings", we can directly compare different types of food consumed, without having to worry about how different foods are usually consumed in different weights.
 
+
 ```{r}
 both_days_adults_food_servings <- complex_group_splits |>
   group_by(Category.Label) |> 
-  mutate(median_grams = median(GRAMWGT)) |>
+  mutate(median_grams = median(GRAMWGT[GRAMWGT != 0])) |>
   mutate(Servings = ifelse(median_grams != 0, GRAMWGT / median_grams, 0)) # sets to 0 if median grams is 0... avoids any divide by 0 errors.
 
 both_days_adults_food_servings$Servings <- format(both_days_adults_food_servings$Servings, scientific = FALSE)
-head(both_days_adults_food_servings, 10)
+head(both_days_adults_food_servings)
 ```
 
 #### Summarising data such that we have one row per individual
@@ -100,8 +101,20 @@ wide_adults_food_servings = both_days_adults_food_servings |>
   summarise(Total_Servings = sum(Servings, na.rm = TRUE), .groups = 'drop') |>
   pivot_wider(names_from = Category.Label, values_from = Total_Servings, values_fill = 0)
 
+wide_adults_food_GRAMS <- complex_group_splits |>
+  group_by(ABSPID, Category.Label) |>
+  summarise(Total_Grams = sum(GRAMWGT, na.rm = TRUE), .groups = 'drop') |>
+  pivot_wider(names_from = Category.Label, values_from = Total_Grams, values_fill = 0)
+
+
+
+
 head(wide_adults_food_servings, 10)
 ```
+
+> Approach now:
+
+- G
 
 #### Grouping food items together with substantial overlap
 
@@ -305,8 +318,9 @@ colnames(wide_adults_food_servings_foods_grouped)
 colnames(wide_adults_food_servings_foods_grouped)
 ```
 
-
 ## PCA
+
+## PCA on SERVINGS
 
 ```{r}
 pca_result <- prcomp(wide_adults_food_servings_foods_grouped |> select(-ABSPID), scale = TRUE)
@@ -325,6 +339,23 @@ plot(pca_result, type = "l")
 
 There's approx. 4 PC's with eigenvalue > 1.5.
 
+### PCA on GRAMS
+
+```{r}
+grams_pca_result <- prcomp(wide_adults_food_GRAMS_foods_grouped |> select(-ABSPID))
+
+summary(grams_pca_result)
+
+grams_pca_scores <- pca_result$x
+
+GRAMS_PCA_with_ids = cbind(wide_adults_food_GRAMS_foods_grouped$ABSPID, data.frame(grams_pca_scores))
+
+saveRDS(GRAMS_PCA_with_ids, "GRAMS_PCA_with_ids.rds")
+
+```
+
+
+
 #### Saving PCA and food serving data
 
 ```{r}
@@ -333,4 +364,14 @@ save(wide_adults_food_servings_foods_grouped,file = "wide_adults_food_servings_f
 ```
 
 
+
+
+
+
+```{r}
+tech_food |>
+  mutate(ENERG)
+  group_by(ABSPID) |>
+  mutate()
+```
 
