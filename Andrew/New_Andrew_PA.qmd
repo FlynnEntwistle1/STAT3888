@@ -11,6 +11,10 @@ editor: visual
 
 ```{r, message=FALSE}
 library(tidyverse)
+library(stringr)
+library(nnet)
+library(dplyr)
+library(caret)
 load("../data/tech_data.Rdata")
 ```
 
@@ -23,7 +27,6 @@ Currently:
 - Food codes have been replaced with their actual labels in the data dictionary.
 
 ```{r}
-library(stringr)
 
 fooditems_dict_major = read.csv("../data/nutmstatDataItems2019_CSV.csv") |>
   filter(str_length(Category.Code) == 3) |>
@@ -37,8 +40,8 @@ fooditems_dict_minor = read.csv("../data/nutmstatDataItems2019_CSV.csv") |>
 
 both_days_adults_food <- tech_food |>
   group_by(ABSPID) |>
-  left_join(y = tech_biom |> select(ABSPID, AGEC), by = "ABSPID") |>
-  filter(n_distinct(DAYNUM) == 2, AGEC >= 45) |>
+  left_join(y = tech_biom |> select(ABSPID, AGEC, HYPBC, BDYMSQ04), by = "ABSPID") |>
+  filter(n_distinct(DAYNUM) == 2, AGEC >= 45, HYPBC == 5, BDYMSQ04 == 5) |>
   ungroup() |>
   left_join(fooditems_dict_major, by = "THRDIG") |>
   left_join(fooditems_dict_minor, by = "FIVDIG") |>
@@ -342,11 +345,31 @@ pca_merged_with_biom_dat = merge(tech_biom, pca_scores_w_id, by = "ABSPID")
 pca_merged_with_dat = merge(tech_nutr, pca_merged_with_biom_dat, by="ABSPID")
 pca_merged_with_dat$ENERGTOT <- pca_merged_with_dat$ENERGYT1 + pca_merged_with_dat$ENERGYT2
 
+pca_merged_with_biom_dat$ENERGTOT <- pca_merged_with_dat$ENERGTOT
+
 # Cleaning the merged df
-missing_percentage <- colMeans(is.na(pca_merged_with_dat)) * 100
-filtered_data <- pca_merged_with_dat[, (missing_percentage < 44) | (names(pca_merged_with_dat) == "DIAHBRSK") | (names(pca_merged_with_dat) == "GLUCFPD") | (names(pca_merged_with_dat) == "TRIGNTR") | (names(pca_merged_with_dat) == "HCHOLBC ")]
-cleaned_pca_merged <- na.omit(filtered_data)
+missing_percentage <- colMeans(is.na(pca_merged_with_biom_dat)) * 100
+filtered_data <- pca_merged_with_biom_dat[, (missing_percentage < 44) | (names(pca_merged_with_biom_dat) == "DIAHBRSK") | (names(pca_merged_with_biom_dat) == "GLUCFPD") | (names(pca_merged_with_biom_dat) == "TRIGNTR") | (names(pca_merged_with_biom_dat) == "HCHOLBC ")]
+cleaned_pca_merged <- filtered_data
+
+# Fixing exercise variables to numeric
+cleaned_pca_merged$EXLWTBC <- as.numeric(as.character(cleaned_pca_merged$EXLWTBC))
+cleaned_pca_merged$EXLWMBC <- as.numeric(as.character(cleaned_pca_merged$EXLWMBC))
+cleaned_pca_merged$EXLWVBC <- as.numeric(as.character(cleaned_pca_merged$EXLWVBC))
+
+# Removing columns that end with "_MISS"
+cols_to_remove <- grep("_MISS$", colnames(cleaned_pca_merged))
+cleaned_pca_merged <- cleaned_pca_merged[, -cols_to_remove]
+
+# Removing any zero variance variables
+zero_var_columns <- nearZeroVar(cleaned_pca_merged, saveMetrics = TRUE)
+cleaned_pca_merged <- cleaned_pca_merged[, !zero_var_columns$zeroVar]
+
+cleaned_pca_merged <- cleaned_pca_merged %>% select(-ABSPID)
+
+cleaned_pca_merged <- na.omit(cleaned_pca_merged)
 cleaned_pca_merged <- droplevels(cleaned_pca_merged)
+
 glimpse(cleaned_pca_merged)
 
 ```
@@ -496,13 +519,20 @@ find_p_values <- function(model_summary){
 
 ```{r}
 glimpse(cleaned_pca_merged)
-library(nnet)
 
 # The Linear Regression
-plot_lm_model(PHDCMWBC ~ PC1 + PC2 + PC3 + PC4,  cleaned_pca_merged, "PHDCMWBC")  # Waist Circumference
-plot_lm_model(PHDKGWBC ~ PC1 + PC2 + PC3 + PC4, cleaned_pca_merged, "PHDKGWBC")  # Weight
-plot_lm_model(SYSTOL ~ PC1 + PC2 + PC3 + PC4, cleaned_pca_merged, "SYSTOL")      # Systolic Blood Pressure
-plot_lm_model(DIASTOL ~ PC1 + PC2 + PC3 + PC4 , cleaned_pca_merged, "DIASTOL")    # Diastolic Blood Pressure
+glimpse(cleaned_pca_merged)
+cleaned_pca_merged$SM
+plot_lm_model(PHDCMWBC ~ PC1 + PC2 + PC3 + ENERGTOT ,  cleaned_pca_merged, "PHDCMWBC")  # Waist Circumference
+summary(lm(PHDCMWBC ~ . ,  cleaned_pca_merged))
+plot_lm_model(PHDKGWBC ~ PC1 + PC2 + PC3, cleaned_pca_merged, "PHDKGWBC")  # Weight
+plot_lm_model(SYSTOL ~ PC1 + PC2 + PC3, cleaned_pca_merged, "SYSTOL")      # Systolic Blood Pressure
+plot_lm_model(DIASTOL ~ PC1 + PC2 + PC3, cleaned_pca_merged, "DIASTOL")    # Diastolic Blood Pressure
+plot_lm_model(BMISC ~ PC1 + PC2 + PC3,  cleaned_pca_merged, "BMISC") # BMI
+plot_lm_model(EXLWMBC  ~ PC1 + PC2 + PC3,  cleaned_pca_merged, "EXLWMBC") # Physical Activity
+plot_lm_model(ADTOTSE ~ PC1 + PC2 + PC3,  cleaned_pca_merged, "ADTOTSE") # Physical Activity
+
+cor(cleaned_pca_merged$DIASTOL, clenaed_pca_merged$PC1)
 
 # Logistic Regressiosn
 model1 <- multinom(DIAHBRSK ~ PC1 + PC2 + PC3 + PC4, data = cleaned_pca_merged)
@@ -518,5 +548,118 @@ find_p_values(summary(model2))
 find_p_values(summary(model3))
 find_p_values(summary(model4))
 table(cleaned_pca_merged$HCHOLBC)
+```
+
+## Trying Gradient Boosting Regression
+```{r}
+library(gbm)
+
+gradient_boosting_regression_model <- gbm(
+  formula = DIASTOL ~ PC1 + PC2 + PC3 + ENERGTOT + SMKSTAT + INCDEC + SEX + BMISC + AGEC + EXLWMBC,
+  data = cleaned_pca_merged,
+  distribution = "gaussian",
+  n.trees=500,
+  interaction.depth=3,
+  shrinkage=0.01,
+  cv.folds = 5,
+  n.minobsinnode = 10,
+  verbose=FALSE
+)
+
+
+best_iter <- gbm.perf(gradient_boosting_regression_model, method = "cv")
+
+# Print the best number of trees
+print(best_iter)
+
+
+predictions <- predict(gradient_boosting_regression_model, newdata = cleaned_pca_merged, n.trees = best_iter)
+
+# Calculate RMSE
+rmse <- sqrt(mean((cleaned_pca_merged$DIASTOL - predictions)^2))
+print(paste("RMSE:", rmse))
+
+# Calculate R-squared
+SST <- sum((cleaned_pca_merged$DIASTOL - mean(cleaned_pca_merged$DIASTOL))^2)
+SSE <- sum((cleaned_pca_merged$DIASTOL - predictions)^2)
+r_squared <- 1 - (SSE / SST)
+print(paste("R-squared:", r_squared))
+```
+
+## SVM Stuff
+
+```{r}
+# SVM
+library(e1071)
+set.seed(1370)
+model <- svm(DIASTOL ~ PC1 + PC2 + PC3 + ENERGTOT + SMKSTAT + INCDEC + SEX + AGEC + EXLWMBC, data = cleaned_pca_merged, type="eps-regression", kernel = "sigmoid") # Linear, Polynomial, radial, sigmoid
+
+
+predictions <- predict(model, cleaned_pca_merged)
+
+mse <- mean((cleaned_pca_merged$DIASTOL - predictions)^2)
+
+# R-squared
+rss <- sum((cleaned_pca_merged$DIASTOL - predictions)^2)
+tss <- sum((cleaned_pca_merged$DIASTOL - mean(cleaned_pca_merged$DIASTOL))^2)
+r_squared <- 1 - rss/tss
+
+# Display the results
+mse
+r_squared
+
+# Permutation Feature Importance
+# Function to calculate MSE
+mse_func <- function(true, predicted) {
+  mean((true - predicted)^2)
+}
+
+# Get baseline MSE
+original_predictions <- predict(model, cleaned_pca_merged)
+original_mse <- mse_func(cleaned_pca_merged$DIASTOL, original_predictions)
+
+# Initialize a vector to store feature importance scores
+feature_importance <- numeric(ncol(cleaned_pca_merged) - 1)  # Subtract 1 to ignore the target variable
+
+# Iterate through each feature (excluding the target variable)
+for (i in 1:(ncol(cleaned_pca_merged) - 1)) {
+  # Create a copy of the dataset
+  permuted_data <- cleaned_pca_merged
+  
+  # Shuffle the i-th feature
+  permuted_data[, i] <- sample(permuted_data[, i])
+  
+  # Make predictions on the permuted dataset
+  permuted_predictions <- predict(model, permuted_data)
+  
+  # Calculate the new MSE
+  permuted_mse <- mse_func(cleaned_pca_merged$DIASTOL, permuted_predictions)
+  
+  # Calculate importance as the change in MSE
+  feature_importance[i] <- permuted_mse - original_mse
+}
+
+# Name the feature importance values based on the predictors
+names(feature_importance) <- colnames(cleaned_pca_merged)[1:(ncol(cleaned_pca_merged) - 1)]
+
+# Print the feature importance scores
+print(feature_importance)
+
+```
+
+## Random Foresting
+
+```{r}
+
+library(randomForest)
+
+# Train a random forest model
+rf_model <- randomForest(DIASTOL ~ ., data = cleaned_pca_merged)
+
+# Get feature importance
+importance(rf_model)
+
+# Plot feature importance
+varImpPlot(rf_model)
 ```
 
