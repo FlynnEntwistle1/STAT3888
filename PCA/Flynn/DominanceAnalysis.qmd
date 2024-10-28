@@ -1,0 +1,142 @@
+# Modelling for report
+
+```{r}
+#| message: false
+library(tidyverse)
+load('../../data/tech_data.Rdata')
+```
+
+```{r}
+wide_adults_food_servings_foods_grouped = readRDS("../wide_adults_food_servings_foods_grouped.rds")
+load("../PCA_results.RData")
+num_PCs = 3
+pca_w_ids <- data.frame(ABSPID = wide_adults_food_servings_foods_grouped$ABSPID, pca_result$x[,1:num_PCs])
+```
+
+## Merging PCA data with `tech_biom`, and energy data from `tech_nutr`.
+
+> Note: `ord_fact_biom` is just a minimally cleaned and renamed version of `tech_nutr`. Any variables where '0' or '99' etc. means NA have been appropriately transformed into NA.
+
+```{r}
+ord_fact_biom = readRDS("ord_fact_biom.rds")
+
+relevant_biom <- ord_fact_biom |>
+  mutate(HYPBC = case_when(
+    HYPBC == 5 ~ "Never told had HYPBC",
+    (HYPBC == 1 | HYPBC == 2) ~ "Current HYPBC",
+    .default = "Previously had HYPBC"
+  )) 
+
+energ_dat = tech_nutr |>
+  dplyr::select(ABSPID, ENERGYT1, ENERGYT2) |>
+  group_by(ABSPID) |>
+  mutate(ENERGTOT = ENERGYT1 + ENERGYT2) |>
+  dplyr::select(-c(ENERGYT1, ENERGYT2))
+
+full_mod_PCA_dat = pca_w_ids |>
+  left_join(relevant_biom, by = "ABSPID") |>
+  left_join(energ_dat, by = "ABSPID") |>
+  dplyr::select(-ends_with("_MISS")) |>
+  dplyr::select(ABSPID, PC1, PC2, PC3, SYSTOL, DIASTOL, HYPBC, starts_with("EXL"), ENERGTOT, SF2SA1QN, SMKSTAT, SEX, DIETQ12, DIETQ14, BMISC, AGEC, ADTOTSE, PHDCMWBC, SLPTIME)
+
+systol_lm_dat = full_mod_PCA_dat |>
+  filter(!is.na(SYSTOL)) |>
+  dplyr::select(-HYPBC, -DIASTOL)
+```
+
+
+## Logistic regression
+
+> Binary variable made denoting whether or not person is in top 20% of participants of this category.
+
+> NOTE: For each logistic regression on a PC, I computed summaries, but also expressed them in terms of an odds ratio (rather than log odds) by exponentiating the coefficients. This will be useful for our results / interpretation.
+
+```{r}
+PC1_threshold <- quantile(systol_lm_dat$PC1, 0.8, na.rm = TRUE)
+
+PC2_threshold <- quantile(systol_lm_dat$PC2, 0.8, na.rm = TRUE)
+
+PC3_threshold <- quantile(systol_lm_dat$PC3, 0.8, na.rm = TRUE)
+
+systol_lm_dat$SF2SA1QN = factor(systol_lm_dat$SF2SA1QN, ordered = FALSE) |> relevel(ref = 3)
+
+systol_lm_dat$PC1_bin = ifelse(systol_lm_dat$PC1 > PC1_threshold, 1, 0)
+systol_lm_dat$PC2_bin = ifelse(systol_lm_dat$PC2 > PC2_threshold, 1, 0)
+systol_lm_dat$PC3_bin = ifelse(systol_lm_dat$PC3 > PC3_threshold, 1, 0)
+
+PC1_bin_sum = summary(glm(PC1_bin ~ SYSTOL + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + AGEC + ADTOTSE + PHDCMWBC + SF2SA1QN + SEX + SLPTIME, data = systol_lm_dat, family = binomial))
+
+exp(PC1_bin_sum$coefficients[,1][-1])
+
+PC2_bin_sum = summary(glm(PC2_bin ~ SYSTOL + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + AGEC + ADTOTSE + PHDCMWBC + SF2SA1QN + SEX + SLPTIME, data = systol_lm_dat, family = binomial))
+
+exp(PC2_bin_sum$coefficients[,1][-1])
+
+PC3_bin_sum = summary(glm(PC3_bin ~ SYSTOL + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + AGEC + ADTOTSE + PHDCMWBC + SF2SA1QN + SEX + SLPTIME, data = systol_lm_dat, family = binomial))
+
+exp(PC3_bin_sum$coefficients[,1][-1])
+```
+
+## Multiple Linear Regression and Relative Importance
+
+```{r}
+library(dominanceanalysis)
+
+# Refactoring of data. 
+  # Filtering out levels with low observations from SMKSTAT.
+  # Choosing baseline level of categorical variables.
+
+test_dat = systol_lm_dat |> select(-ABSPID, -SF2SA1QN) |> 
+  filter(SMKSTAT == 1 | SMKSTAT == 4 | SMKSTAT == 5) |>
+  as.data.frame() |>
+  mutate(DIETQ12 = factor(DIETQ12, ordered = FALSE),
+         DIETQ14 = factor(DIETQ14, ordered = FALSE),
+         SEX = factor(ifelse(SEX == 1, "Male", "Female")))
+
+test_dat$SMKSTAT <- relevel(test_dat$SMKSTAT, ref = "5") # making base level non-smoker.
+test_dat$DIETQ12 <- relevel(test_dat$DIETQ12, ref = "Rarely") # making base level salt rarely used
+test_dat$DIETQ14 <- relevel(test_dat$DIETQ14, ref = "Rarely") # making base level salt rarely used
+test_dat$SEX <- relevel(test_dat$SEX, ref = "Female") 
+
+
+
+# MLR MODEL.
+  # TODO: Mess around with this... try removal of DIETQX variables, adding other confounders, maybe making a composite exercise variable (summing mins of activity appropriately?) etc.
+
+lm.2<-lm(SYSTOL~PC1 + PC2 + PC3 + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + SEX + SMKSTAT + AGEC + ADTOTSE + PHDCMWBC + DIETQ12 + DIETQ14 + SLPTIME, data= test_dat)
+
+mod_sum = summary(lm.2)
+```
+
+
+```{r latex_output_plotting}
+stargazer::stargazer(lm.2)
+
+library(xtable)
+stargazer(lm.2, type = "latex", single.row = TRUE, align = TRUE)
+
+stargazer(lm.2, output = "latex")
+print(xtable(lm.2), type = "latex")
+```
+
+
+### Relative importance
+- Computation takes longer with number of variables you have in model... try removing some (especially categorical vars with multiple levels).
+
+```{r}
+library(dominanceanalysis)
+da<-dominanceAnalysis(lm.2)
+relimps = da$contribution.average[['r2']] / mod_sum$r.squared
+
+
+library(knitr)
+library(kableExtra)
+cat(kable(paste0(round(t(relimps), 3) * 100, "\%"), format = "latex", booktabs = TRUE))
+sum(relimps[c("PC1", "PC2", "PC3")])
+```
+
+
+# Other comments
+- Martin did say to me that it's fine to present a few different models. It may be worth trying this with individual food items (instead of PC's) from inspection of our PC's, and assessing their performance?
+- 
+

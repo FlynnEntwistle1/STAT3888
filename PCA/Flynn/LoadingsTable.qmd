@@ -73,13 +73,7 @@ grams_pca_result$rotation
 
 num_PCs = 4
 
-pca_loadings <- pca_result$rotation[,1:num_PCs]
-
-# pc1 <- pca_loadings[,1]
-
-# pc1[order(abs(pc1), decreasing = TRUE)]
-
-# most influential loadings (6 positive, 6 negative)
+pca_loadings <- grams_pca_result$rotation[,1:num_PCs]
 
 get_top_loadings <- function(PC) {
   pos = PC[order(PC, decreasing = TRUE)][1:6]
@@ -91,7 +85,6 @@ get_top_loadings <- function(PC) {
   mat <- cbind(names, round(mat, 3))
   return(mat)
 }
-
 
 # sry idk why i chose to do this recursively...
 make_table <- function(curr_tab, i) {

@@ -106,9 +106,6 @@ wide_adults_food_GRAMS <- complex_group_splits |>
   summarise(Total_Grams = sum(GRAMWGT, na.rm = TRUE), .groups = 'drop') |>
   pivot_wider(names_from = Category.Label, values_from = Total_Grams, values_fill = 0)
 
-
-
-
 head(wide_adults_food_servings, 10)
 ```
 
@@ -312,6 +309,19 @@ wide_adults_food_servings_foods_grouped <- wide_adults_food_servings |>
 colnames(wide_adults_food_servings_foods_grouped)
 ```
 
+## Grouping ATTEMPT 2
+
+```{r}
+non_zero_counts <- colSums(wide_adults_food_servings_foods_grouped != 0)
+
+
+wide_adults_food_servings_foods_grouped |>
+  
+```
+
+
+## end pca attempt 2
+
 > Results of variable merging (so far).
 
 ```{r}
@@ -334,7 +344,20 @@ pca_scores <- pca_result$x
 pca_loadings <- pca_result$rotation
 
 # Plot the variance explained by each principal component
-plot(pca_result, type = "l")
+plot(pca_result, type = "l", main = "Principal components with ")
+
+eigenvalues <- pca_result$sdev^2
+eigen_dat = data.frame(Eigenvalue = eigenvalues[1:9], Number = rep(1:9))
+
+eigen_dat |>
+  ggplot(aes(x = Number, y = Eigenvalue)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  labs(title = "Eigenvalues of Principal Components", x = element_blank()) +
+  geom_vline(xintercept =  3, color = "brown", linetype = "dashed", size=1) +
+  scale_x_discrete(limits = c(1:9))
+
 ```
 
 There's approx. 4 PC's with eigenvalue > 1.5.
@@ -342,19 +365,16 @@ There's approx. 4 PC's with eigenvalue > 1.5.
 ### PCA on GRAMS
 
 ```{r}
-grams_pca_result <- prcomp(wide_adults_food_GRAMS_foods_grouped |> select(-ABSPID))
+grams_pca_result <- prcomp(wide_adults_food_GRAMS_foods_grouped |> select(-ABSPID), scale. = TRUE, rank = 4)
 
 summary(grams_pca_result)
-
 grams_pca_scores <- pca_result$x
 
 GRAMS_PCA_with_ids = cbind(wide_adults_food_GRAMS_foods_grouped$ABSPID, data.frame(grams_pca_scores))
 
+saveRDS(grams_pca_result, "grams_pca_result.rds")
 saveRDS(GRAMS_PCA_with_ids, "GRAMS_PCA_with_ids.rds")
-
 ```
-
-
 
 #### Saving PCA and food serving data
 
@@ -364,14 +384,9 @@ save(wide_adults_food_servings_foods_grouped,file = "wide_adults_food_servings_f
 ```
 
 
-
-
-
-
 ```{r}
 tech_food |>
   mutate(ENERG)
   group_by(ABSPID) |>
   mutate()
 ```
-
