@@ -322,6 +322,8 @@ pca_result <- prcomp(wide_adults_food_servings_foods_grouped |> select(-ABSPID),
 
 summary(pca_result)
 
+pca_result
+
 # This is what is used in regression.
 pca_scores <- pca_result$x
 
@@ -331,6 +333,38 @@ pca_loadings <- pca_result$rotation
 # Plot the variance explained by each principal component
 plot(pca_result, type = "l")
 ```
+## Turning the PCs into a table
+```{r}
+pca_loadings <- as.data.frame(pca_result$rotation)
+
+# Function to get top 5 loadings for a specific PC
+get_top_loadings <- function(pca_loadings, pc_name) {
+  pca_loadings %>%
+    select(!!sym(pc_name)) %>%
+    mutate(Feature = rownames(pca_loadings)) %>%
+    arrange(desc(abs(!!sym(pc_name)))) %>%
+    head(5)
+}
+
+# Get top 5 loadings for PC1, PC2, and PC3
+top_5_pc1 <- get_top_loadings(pca_loadings, "PC1")
+top_5_pc2 <- get_top_loadings(pca_loadings, "PC2")
+top_5_pc3 <- get_top_loadings(pca_loadings, "PC3")
+
+# Combine the results into a single table
+top_loadings <- data.frame(
+  PC1 = top_5_pc1$Feature,
+  PC1_Loading = top_5_pc1$PC1,
+  PC2 = top_5_pc2$Feature,
+  PC2_Loading = top_5_pc2$PC2,
+  PC3 = top_5_pc3$Feature,
+  PC3_Loading = top_5_pc3$PC3
+)
+
+# Display the table
+print(top_loadings)
+```
+
 
 There's approx. 4 PC's with eigenvalue > 1.5.
 
@@ -379,6 +413,7 @@ glimpse(cleaned_pca_merged)
 plot_lm_model <- function(formula, data, dependent_var_name) {
   # Fit the model
   model <- lm(formula, data = data)
+  
   # Predicted vs Actual Plot
   predicted <- predict(model)
   actual <- data[[dependent_var_name]]  # Access the actual dependent variable
@@ -393,10 +428,17 @@ plot_lm_model <- function(formula, data, dependent_var_name) {
   # Residuals vs Fitted Plot
   plot(model, which = 1, main = paste("Residuals vs Fitted for", dependent_var_name))
   
+  # Calculate RMSE
+  residuals <- actual - predicted
+  rmse <- sqrt(mean(residuals^2))
+  
+  # Print RMSE
+  cat("RMSE:", rmse, "\n")
+  
   # Return the model summary for further inspection
-  summary(model)$r.squared
   return(summary(model))
 }
+
 
 plot_quantile_regression_model <- function(formula, null_formula, data, dependent_var_name, tau = 0.5) {
   # Fit the quantile regression model
