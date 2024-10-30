@@ -61,72 +61,6 @@ systol_lm_dat <- full_mod_PCA_dat |>
 
 ```
 
-## Logistic regression
-
-> Binary variable made denoting whether or not person is in top 20% of participants of this category.
-
-> NOTE: For each logistic regression on a PC, I computed summaries, but also expressed them in terms of an odds ratio (rather than log odds) by exponentiating the coefficients. This will be useful for our results / interpretation.
-
-```{r}
-# PC1_threshold <- quantile(systol_lm_dat$PC1, 0.8, na.rm = TRUE)
-# 
-# PC2_threshold <- quantile(systol_lm_dat$PC2, 0.8, na.rm = TRUE)
-# 
-# PC3_threshold <- quantile(systol_lm_dat$PC3, 0.8, na.rm = TRUE)
-# 
-# systol_lm_dat$SF2SA1QN = factor(systol_lm_dat$SF2SA1QN, ordered = FALSE) |> relevel(ref = 3)
-# 
-# systol_lm_dat$PC1_bin = ifelse(systol_lm_dat$PC1 > PC1_threshold, 1, 0)
-# systol_lm_dat$PC2_bin = ifelse(systol_lm_dat$PC2 > PC2_threshold, 1, 0)
-# systol_lm_dat$PC3_bin = ifelse(systol_lm_dat$PC3 > PC3_threshold, 1, 0)
-# 
-# PC1_bin_sum = summary(glm(PC1_bin ~ SYSTOL + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + AGEC + ADTOTSE + PHDCMWBC + SF2SA1QN + SEX + SLPTIME, data = systol_lm_dat, family = binomial))
-# 
-# exp(PC1_bin_sum$coefficients[,1][-1])
-# 
-# PC2_bin_sum = summary(glm(PC2_bin ~ SYSTOL + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + AGEC + ADTOTSE + PHDCMWBC + SF2SA1QN + SEX + SLPTIME, data = systol_lm_dat, family = binomial))
-# 
-# exp(PC2_bin_sum$coefficients[,1][-1])
-# 
-# PC3_bin_sum = summary(glm(PC3_bin ~ SYSTOL + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + AGEC + ADTOTSE + PHDCMWBC + SF2SA1QN + SEX + SLPTIME, data = systol_lm_dat, family = binomial))
-# 
-# exp(PC3_bin_sum$coefficients[,1][-1])
-```
-
-## Multiple Linear Regression and Relative Importance
-
-```{r}
-# library(dominanceanalysis)
-# 
-# # Refactoring of data. 
-#   # Filtering out levels with low observations from SMKSTAT.
-#   # Choosing baseline level of categorical variables.
-# 
-# test_dat = systol_lm_dat |> select(-ABSPID, -SF2SA1QN) |> 
-#   filter(SMKSTAT == 1 | SMKSTAT == 4 | SMKSTAT == 5) |>
-#   as.data.frame() |>
-#   mutate(DIETQ12 = factor(DIETQ12, ordered = FALSE),
-#          DIETQ14 = factor(DIETQ14, ordered = FALSE),
-#          SEX = factor(ifelse(SEX == 1, "Male", "Female")))
-# 
-# 
-# 
-# test_dat$SMKSTAT <- relevel(test_dat$SMKSTAT, ref = "5") # making base level non-smoker.
-# test_dat$DIETQ12 <- relevel(test_dat$DIETQ12, ref = "Rarely") # making base level salt rarely used
-# test_dat$DIETQ14 <- relevel(test_dat$DIETQ14, ref = "Rarely") # making base level salt rarely used
-# test_dat$SEX <- relevel(test_dat$SEX, ref = "Female") 
-# 
-# 
-# 
-# # MLR MODEL.
-#   # TODO: Mess around with this... try removal of DIETQX variables, adding other confounders, maybe making a composite exercise variable (summing mins of activity appropriately?) etc.
-# 
-# 
-# lm.2<-lm(SYSTOL~PC1 + PC2 + PC3 + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + SEX + SMKSTAT + AGEC + ADTOTSE + PHDCMWBC + DIETQ12 + DIETQ14 + SLPTIME, data= test_dat)
-# 
-# mod_sum = summary(lm.2)
-```
-
 ## Multiple Linear Regression and Relative Importance (Andrew)
 
 ```{r}
@@ -135,20 +69,20 @@ library(dplyr)
 library(broom)
 
 analyze_model_diagnostics <- function(model) {
-  
-  # Step 3: Calculate VIF for multicollinearity
+  # Calculate VIF for multicollinearity
   vif_values <- vif(model)
   
-  # Step 4: Plot residuals
-  plot(model$fitted.values, residuals(model),
-       xlab = "Fitted Values",
-       ylab = "Residuals",
-       main = "Residual Plot")
-  abline(h = 0, col = "red", lty = 2)
+  # Create residual plot
+  p <- ggplot(data.frame(Fitted = model$fitted.values, Residuals = residuals(model)),
+              aes(x = Fitted, y = Residuals)) +
+    geom_point() +
+    geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+    labs(title = "Residual Plot", x = "Fitted Values", y = "Residuals")
   
-  # Return VIF values
-  return(vif_values)
+  # Return VIF values and plot
+  list(vif = vif_values, plot = p)
 }
+
 ```
 
 
@@ -209,14 +143,49 @@ summary(model3)
 ### Model 4 (Age grouped models + Model 3)
 
 ```{r}
-test_dat4 <- systol_lm_dat |> 
-  select(-ABSPID, -SF2SA1QN) |> 
+
+# test_dat4 <- systol_lm_dat |> 
+#   select(-ABSPID, -SF2SA1QN) |> 
+#   filter(SMKSTAT == 1 | SMKSTAT == 4 | SMKSTAT == 5) |>
+#   mutate(
+#     SEX = factor(ifelse(SEX == 1, "Male", "Female")),
+#     SMKSTAT = relevel(factor(SMKSTAT), ref = "5"),
+#     
+#     # Using the risk stratification for cardiovascular disease studies
+#     AGE_GROUP_CVD_RISK = cut(AGEC, 
+#                              breaks = c(45, 54, 64, 74, 84, Inf), 
+#                              labels = c("45-54", "55-64", "65-74", "75-84", "85+"), 
+#                              right = TRUE),
+# 
+#     # Using the standard age groupings starting at 45
+#     AGE_GROUP_STANDARD = cut(AGEC, 
+#                              breaks = c(45, 54, 64, 74, 84, 94, Inf), 
+#                              labels = c("45-54", "55-64", "65-74", "75-84", "85-94", "95+"), 
+#                              right = TRUE)
+#   ) |> 
+#   select(SYSTOL, PC1, PC2, PC3, ENERGTOT, CHOLTOT, SODIUMTOT, AGEC, PHDCMWBC, SEX, SMKSTAT, EXLTOTMV, ADTOTSE, SLPTIME, AGE_GROUP_CVD_RISK, AGE_GROUP_STANDARD) |>
+#   na.omit() |>
+#   mutate(
+#     SMKSTAT = relevel(SMKSTAT, ref = "5"),
+#     SEX = relevel(SEX, ref = "Female")
+#   )
+# 
+# models_by_age_group <- test_dat4 %>%
+#   group_by(AGE_GROUP_CVD_RISK) %>%
+#   do(model = lm(SYSTOL ~ PC1 + PC2 + PC3 + ENERGTOT + CHOLTOT + SODIUMTOT + SEX + PHDCMWBC + SMKSTAT + EXLTOTMV + ADTOTSE + SLPTIME, data = .))
+
+
+
+
+
+test_dat4 <- systol_lm_dat |>
+  select(-ABSPID, -SF2SA1QN) |>
   filter(SMKSTAT == 1 | SMKSTAT == 4 | SMKSTAT == 5) |>
   mutate(
     SEX = factor(ifelse(SEX == 1, "Male", "Female")),
     SMKSTAT = relevel(factor(SMKSTAT), ref = "5"),
-    AGE_GROUP = cut(AGEC, breaks = c(45, 59, 74, Inf), labels = c("45-59", "60-74", "75+"), right = TRUE)
-  ) |> 
+    AGE_GROUP = cut(AGEC, breaks = c(45, 59, 74, Inf), labels = c("45-64", "60-84", "85+"), right = TRUE)
+  ) |>
   select(SYSTOL, PC1, PC2, PC3, ENERGTOT, CHOLTOT, SODIUMTOT, AGEC, PHDCMWBC, SEX, SMKSTAT, EXLTOTMV, ADTOTSE, SLPTIME, AGE_GROUP) |>
   na.omit() |>
   mutate(
@@ -224,49 +193,53 @@ test_dat4 <- systol_lm_dat |>
     SEX = relevel(SEX, ref = "Female")
   )
 
-models_by_age_group <- test_dat4 %>%
-  group_by(AGE_GROUP) %>%
-  do(model = lm(SYSTOL ~ PC1 + PC2 + PC3 + ENERGTOT + CHOLTOT + SODIUMTOT + SEX + AGEC + PHDCMWBC + SMKSTAT + EXLTOTMV + ADTOTSE + SLPTIME, data = .))
 
-analyze_model_diagnostics(models_by_age_group$model[[1]])
-summary(models_by_age_group$model[[1]])
-analyze_model_diagnostics(models_by_age_group$model[[2]])
-summary(models_by_age_group$model[[2]])
-analyze_model_diagnostics(models_by_age_group$model[[3]])
-summary(models_by_age_group$model[[3]])
+models_by_age_sex_group <- test_dat4 %>%
+  group_by(AGE_GROUP, SEX) %>%
+  do(model = lm(SYSTOL ~ PC1 + PC2 + PC3 + ENERGTOT + CHOLTOT + SODIUMTOT + AGEC + PHDCMWBC + SMKSTAT + EXLTOTMV + ADTOTSE + SLPTIME, data = .))
+
+model4 <- models_by_age_sex_group$model[[2]]
+summary(model4)
+analyze_model_diagnostics(model4)
 ```
 
-
-
-```{r latex_output_plotting}
-# stargazer::stargazer(lm.2)
-# 
-# library(xtable)
-# stargazer(lm.2, type = "latex", single.row = TRUE, align = TRUE)
-# 
-# stargazer(lm.2, output = "latex")
-# print(xtable(lm.2), type = "latex")
-```
-
-
-
-### Relative importance
-
--   Computation takes longer with number of variables you have in model... try removing some (especially categorical vars with multiple levels).
+## Making the plots
 
 ```{r}
-# library(dominanceanalysis)
-# da<-dominanceAnalysis(lm.2)
-# relimps = da$contribution.average[['r2']] / mod_sum$r.squared
-# 
-# 
-# library(knitr)
-# library(kableExtra)
-# cat(kable(paste0(round(t(relimps), 3) * 100, "\%"), format = "latex", booktabs = TRUE))
-# sum(relimps[c("PC1", "PC2", "PC3")])
+# Analyze each model and store the plots
+library(gridExtra)
+library(knitr)
+library(stargazer)
+
+diagnostics_model1 <- analyze_model_diagnostics(model1)$plot
+diagnostics_model2 <- analyze_model_diagnostics(model2)$plot
+diagnostics_model3 <- analyze_model_diagnostics(model3)$plot
+diagnostics_model4 <- analyze_model_diagnostics(model4)$plot
+
+grid.arrange(diagnostics_model1, diagnostics_model2, diagnostics_model3,
+             diagnostics_model4, ncol = 2)
+
+
+vif_model1 <- data.frame(analyze_model_diagnostics(model1)$vif)
+colnames(vif_model1) <- "VIF Values"
+
+
+vif_model2 <- data.frame(analyze_model_diagnostics(model2)$vif)
+colnames(vif_model2) <- "VIF Values"
+
+vif_model3 <- data.frame(analyze_model_diagnostics(model3)$vif)
+vif_model3 <- vif_model3[, 3, drop = FALSE] # Select the third column only
+colnames(vif_model3) <- "VIF Values"       # Rename the column to "VIF Values"
+
+vif_model4 <- data.frame(analyze_model_diagnostics(model4)$vif)
+vif_model4 <- vif_model4[, 3, drop = FALSE] # Select the third column only
+colnames(vif_model4) <- "VIF Values"       # Rename the column to "VIF Values"
+
+
+kable(vif_model1, caption = "VIF for Model 1")
+kable(vif_model2, caption = "VIF for Model 2")
+kable(vif_model3, caption = "VIF for Model 3")
+kable(vif_model4, caption = "VIF for Model 4")
+
 ```
 
-# Other comments
-
--   Martin did say to me that it's fine to present a few different models. It may be worth trying this with individual food items (instead of PC's) from inspection of our PC's, and assessing their performance?
--   
