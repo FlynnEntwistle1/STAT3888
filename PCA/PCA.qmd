@@ -333,6 +333,7 @@ colnames(wide_adults_food_servings_foods_grouped)
 ## PCA on SERVINGS
 
 ```{r}
+#| warning: false
 pca_result <- prcomp(wide_adults_food_servings_foods_grouped |> select(-ABSPID), scale = TRUE)
 
 summary(pca_result)
@@ -354,10 +355,9 @@ eigen_dat |>
   geom_point() +
   geom_line() +
   theme_bw() +
-  labs(title = "Eigenvalues of Principal Components", x = element_blank()) +
+  labs(title = "Eigenvalues of Principal Components", x = "Principal Component") +
   geom_vline(xintercept =  3, color = "brown", linetype = "dashed", size=1) +
   scale_x_discrete(limits = c(1:9))
-
 ```
 
 There's approx. 4 PC's with eigenvalue > 1.5.

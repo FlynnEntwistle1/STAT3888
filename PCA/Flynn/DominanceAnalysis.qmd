@@ -28,16 +28,20 @@ relevant_biom <- ord_fact_biom |>
   )) 
 
 energ_dat = tech_nutr |>
-  dplyr::select(ABSPID, ENERGYT1, ENERGYT2) |>
+  dplyr::select(ABSPID, ENERGYT1, ENERGYT2, SODIUMT1, SODIUMT2, CHOLT1, CHOLT2) |>
   group_by(ABSPID) |>
-  mutate(ENERGTOT = ENERGYT1 + ENERGYT2) |>
-  dplyr::select(-c(ENERGYT1, ENERGYT2))
+  mutate(ENERGTOT = ENERGYT1 + ENERGYT2,
+         SODIUMTOT = SODIUMT1 + SODIUMT2,
+         CHOLTOT = CHOLT1 + CHOLT2) |>
+  dplyr::select(-c(ENERGYT1, ENERGYT2, SODIUMT1, SODIUMT2, CHOLT1, CHOLT2))
+
+energ_dat |> select(CHOLTOT) |> filter(!is.na(CHOLTOT))
 
 full_mod_PCA_dat = pca_w_ids |>
   left_join(relevant_biom, by = "ABSPID") |>
   left_join(energ_dat, by = "ABSPID") |>
   dplyr::select(-ends_with("_MISS")) |>
-  dplyr::select(ABSPID, PC1, PC2, PC3, SYSTOL, DIASTOL, HYPBC, starts_with("EXL"), ENERGTOT, SF2SA1QN, SMKSTAT, SEX, DIETQ12, DIETQ14, BMISC, AGEC, ADTOTSE, PHDCMWBC, SLPTIME)
+  dplyr::select(ABSPID, PC1, PC2, PC3, SYSTOL, DIASTOL, HYPBC, starts_with("EXL"), ENERGTOT, SODIUMTOT, CHOLTOT, SF2SA1QN, SMKSTAT, SEX, DIETQ12, DIETQ14, BMISC, AGEC, ADTOTSE, PHDCMWBC, SLPTIME)
 
 systol_lm_dat = full_mod_PCA_dat |>
   filter(!is.na(SYSTOL)) |>
@@ -96,9 +100,39 @@ test_dat = systol_lm_dat |> select(-ABSPID, -SF2SA1QN) |>
 test_dat$SMKSTAT <- relevel(test_dat$SMKSTAT, ref = "5") # making base level non-smoker.
 test_dat$DIETQ12 <- relevel(test_dat$DIETQ12, ref = "Rarely") # making base level salt rarely used
 test_dat$DIETQ14 <- relevel(test_dat$DIETQ14, ref = "Rarely") # making base level salt rarely used
-test_dat$SEX <- relevel(test_dat$SEX, ref = "Female") 
+test_dat$SEX     <- relevel(test_dat$SEX, ref = "Female") 
 
 
+MOD1_predictors = c("PC1", "PC2", "PC3", "ENERGTOT") # Just PC's and energtot... examining for effect of PC's controlling for ENERGTOT.
+MOD2_predictors = c("PC1", "PC2", "PC3", "ENERGTOT", "CHOLTOT", "SODIUMTOT") # As model 1, but also controlling for cholesterol and sodium.
+MOD3_predictors = c("PC1", "PC2", "PC3", "ENERGTOT", "CHOLTOT", "SODIUMTOT", "AGEC", "PHDCMWBC", "SEX", "SMKSTAT", "EXLWTBC", "EXLWMBC", "EXLWVBC", "ADTOTSE", "SLPTIME") # As model 2, but adding known other confounders from domain knowledge.
+MOD3_predictors_EDITED = c("PC1", "PC2", "PC3", "ENERGTOT", "CHOLTOT", "SODIUMTOT", "PHDCMWBC", "SEX", "SMKSTAT", "EXLWTBC", "EXLWMBC", "EXLWVBC", "ADTOTSE", "SLPTIME") # As model 2, but adding known other confounders from domain knowledge.
+
+boxplot(test_dat$EXLWVBC)
+
+numeric_predictors <- sapply(systol_lm_dat, is.numeric)
+
+systol_lm_dat_SCALED = systol_lm_dat
+systol_lm_dat_SCALED[numeric_predictors] <- scale(systol_lm_dat_SCALED[numeric_predictors])
+
+lm.1 = lm(as.formula(paste("SYSTOL ~", paste(MOD1_predictors, collapse = "+"))), data=systol_lm_dat)
+lm.2 = lm(as.formula(paste("SYSTOL ~", paste(MOD2_predictors, collapse = "+"))), data=systol_lm_dat)
+lm.3 = lm(as.formula(paste("SYSTOL ~", paste(MOD3_predictors, collapse = "+"))), data=systol_lm_dat)
+summary(lm.1)
+summary(lm.2)
+summary(lm.3)
+
+# SCALED numerical preds.
+
+lm.1.scaled = lm(as.formula(paste("SYSTOL ~", paste(MOD1_predictors, collapse = "+"))), data=systol_lm_dat_SCALED)
+lm.2.scaled = lm(as.formula(paste("SYSTOL ~", paste(MOD2_predictors, collapse = "+"))), data=systol_lm_dat_SCALED)
+lm.3.scaled = lm(as.formula(paste("SYSTOL ~", paste(MOD3_predictors, collapse = "+"))), data=systol_lm_dat_SCALED)
+lm.3.scaled_EDITED = lm(as.formula(paste("SYSTOL ~", paste(MOD3_predictors_EDITED, collapse = "+"))), data=systol_lm_dat_SCALED)
+
+summary(lm.1.scaled)
+summary(lm.2.scaled)
+summary(lm.3.scaled)
+summary(lm.3.scaled_EDITED)
 
 # MLR MODEL.
   # TODO: Mess around with this... try removal of DIETQX variables, adding other confounders, maybe making a composite exercise variable (summing mins of activity appropriately?) etc.
@@ -106,6 +140,13 @@ test_dat$SEX <- relevel(test_dat$SEX, ref = "Female")
 lm.2<-lm(SYSTOL~PC1 + PC2 + PC3 + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + SEX + SMKSTAT + AGEC + ADTOTSE + PHDCMWBC + DIETQ12 + DIETQ14 + SLPTIME, data= test_dat)
 
 mod_sum = summary(lm.2)
+```
+
+
+```{r robust_regression}
+library(robustbase)
+
+summary(lmrob(SYSTOL~PC1 + PC2 + PC3 + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + SEX + SMKSTAT + AGEC + ADTOTSE + PHDCMWBC + DIETQ12 + DIETQ14 + SLPTIME, data= test_dat))
 ```
 
 
