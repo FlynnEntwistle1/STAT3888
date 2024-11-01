@@ -21,11 +21,13 @@ pca_w_ids <- data.frame(ABSPID = wide_adults_food_servings_foods_grouped$ABSPID,
 ord_fact_biom = readRDS("ord_fact_biom.rds")
 
 relevant_biom <- ord_fact_biom |>
-  mutate(HYPBC = case_when(
-    HYPBC == 5 ~ "Never told had HYPBC",
-    (HYPBC == 1 | HYPBC == 2) ~ "Current HYPBC",
-    .default = "Previously had HYPBC"
-  )) 
+  mutate(
+    HYPBC = case_when(
+      HYPBC == 5 ~ "Never told had HYPBC",
+      (HYPBC == 1 | HYPBC == 2) ~ "Current HYPBC",
+      .default = "Previously had HYPBC"),
+    SEX = ifelse(SEX == 1, "Male", "Female")
+  ) 
 
 energ_dat = tech_nutr |>
   dplyr::select(ABSPID, ENERGYT1, ENERGYT2, SODIUMT1, SODIUMT2, CHOLT1, CHOLT2) |>
@@ -43,9 +45,12 @@ full_mod_PCA_dat = pca_w_ids |>
   dplyr::select(-ends_with("_MISS")) |>
   dplyr::select(ABSPID, PC1, PC2, PC3, SYSTOL, DIASTOL, HYPBC, starts_with("EXL"), ENERGTOT, SODIUMTOT, CHOLTOT, SF2SA1QN, SMKSTAT, SEX, DIETQ12, DIETQ14, BMISC, AGEC, ADTOTSE, PHDCMWBC, SLPTIME)
 
+# NEW: EXL measure.
 systol_lm_dat = full_mod_PCA_dat |>
   filter(!is.na(SYSTOL)) |>
-  dplyr::select(-HYPBC, -DIASTOL)
+  dplyr::select(-HYPBC, -DIASTOL) |>
+  mutate(EXLTOTMV = EXLWMBC + (2*EXLWVBC)) |>
+  select(-EXLWMBC, -EXLWVBC, -EXLWTBC)
 ```
 
 
@@ -55,31 +60,138 @@ systol_lm_dat = full_mod_PCA_dat |>
 
 > NOTE: For each logistic regression on a PC, I computed summaries, but also expressed them in terms of an odds ratio (rather than log odds) by exponentiating the coefficients. This will be useful for our results / interpretation.
 
+
+```{r helper_fn_for_OR_stargazer}
+stargazer2 <- function(model, odd.ratio = F, ...) {
+  if(!("list" %in% class(model))) model <- list(model)
+    
+  if (odd.ratio) {
+    coefOR2 <- lapply(model, function(x) exp(coef(x)))
+    seOR2 <- lapply(model, function(x) exp(coef(x)) * summary(x)$coef[, 2])
+    p2 <- lapply(model, function(x) summary(x)$coefficients[, 4])
+    stargazer(model, coef = coefOR2, se = seOR2, p = p2, ...)
+    
+  } else {
+    stargazer(model, ...)
+  }
+}
+```
+
+
 ```{r}
 PC1_threshold <- quantile(systol_lm_dat$PC1, 0.8, na.rm = TRUE)
 
 PC2_threshold <- quantile(systol_lm_dat$PC2, 0.8, na.rm = TRUE)
 
 PC3_threshold <- quantile(systol_lm_dat$PC3, 0.8, na.rm = TRUE)
+systol_lm_dat$SF2SA1QN = factor(systol_lm_dat$SF2SA1QN, ordered = FALSE) |> relevel(ref = '3')
 
-systol_lm_dat$SF2SA1QN = factor(systol_lm_dat$SF2SA1QN, ordered = FALSE) |> relevel(ref = 3)
+systol_log_reg_lm_dat = systol_lm_dat |> 
+  filter(SMKSTAT == 1 | SMKSTAT == 4 | SMKSTAT == 5) |>
+  mutate(SMKSTAT = factor(case_when(
+    SMKSTAT == 1 ~ "Daily Smoker", SMKSTAT == 4 ~ "Ex-Smoker", .default = "Never Smoked")) |> relevel(ref = "Never Smoked")) |>
+  mutate(ADTOTSE = ADTOTSE / 60) |>
+  mutate(SLPTIME = SLPTIME / 60) |>
+  mutate(ENERGTOT = ENERGTOT / 1000) |>
+  mutate(CHOLTOT = CHOLTOT / 100) |>
+  mutate(SODIUMTOT = SODIUMTOT / 100)
 
-systol_lm_dat$PC1_bin = ifelse(systol_lm_dat$PC1 > PC1_threshold, 1, 0)
-systol_lm_dat$PC2_bin = ifelse(systol_lm_dat$PC2 > PC2_threshold, 1, 0)
-systol_lm_dat$PC3_bin = ifelse(systol_lm_dat$PC3 > PC3_threshold, 1, 0)
+systol_log_reg_lm_dat$PC1_bin = ifelse(systol_log_reg_lm_dat$PC1 > PC1_threshold, 1, 0)
+systol_log_reg_lm_dat$PC2_bin = ifelse(systol_log_reg_lm_dat$PC2 > PC2_threshold, 1, 0)
+systol_log_reg_lm_dat$PC3_bin = ifelse(systol_log_reg_lm_dat$PC3 > PC3_threshold, 1, 0)
 
-PC1_bin_sum = summary(glm(PC1_bin ~ SYSTOL + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + AGEC + ADTOTSE + PHDCMWBC + SF2SA1QN + SEX + SLPTIME, data = systol_lm_dat, family = binomial))
+PC1_log_mod = glm(PC1_bin ~ SYSTOL + EXLTOTMV + ENERGTOT + CHOLTOT + SODIUMTOT + AGEC + ADTOTSE + PHDCMWBC + SLPTIME + SF2SA1QN + SEX + SMKSTAT, data = systol_log_reg_lm_dat, family = binomial)
 
-exp(PC1_bin_sum$coefficients[,1][-1])
+PC1_bin_sum = summary(PC1_log_mod)
+PC1_conf_ints <- confint(PC1_log_mod)
 
-PC2_bin_sum = summary(glm(PC2_bin ~ SYSTOL + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + AGEC + ADTOTSE + PHDCMWBC + SF2SA1QN + SEX + SLPTIME, data = systol_lm_dat, family = binomial))
+options(scipen = 999)
+
+PC1_OR_conf_ints <- exp(PC1_conf_ints)
+
+PC1_OR_formatted_conf_ints <- apply(PC1_OR_conf_ints, 1, function(x) {
+  paste0("(", round(x[1], 4), ", ", round(x[2], 4), ")")
+})
+
+PC1_OR_COEFS = exp(PC1_bin_sum$coefficients[,1])
+round(PC1_OR_COEFS, 4)
+
+library(stargazer)
+stargazer2(PC1_log_mod, odd.ratio=TRUE, type = "latex", single.row = TRUE, digits = 5)
+
+PC2_log_mod = glm(PC2_bin ~ SYSTOL + EXLTOTMV + ENERGTOT + CHOLTOT + SODIUMTOT + AGEC + ADTOTSE + PHDCMWBC + SLPTIME + SF2SA1QN + SEX + SMKSTAT, data = systol_log_reg_lm_dat, family = binomial)
+PC2_bin_sum = summary(PC2_log_mod)
+
+stargazer2(PC2_log_mod, odd.ratio=TRUE, type="latex", single.row = TRUE, digits = 5)
 
 exp(PC2_bin_sum$coefficients[,1][-1])
 
-PC3_bin_sum = summary(glm(PC3_bin ~ SYSTOL + EXLWTBC + EXLWMBC + EXLWVBC + ENERGTOT + AGEC + ADTOTSE + PHDCMWBC + SF2SA1QN + SEX + SLPTIME, data = systol_lm_dat, family = binomial))
+PC3_log_mod = glm(PC3_bin ~ SYSTOL + EXLTOTMV + ENERGTOT + CHOLTOT + SODIUMTOT + AGEC + ADTOTSE + PHDCMWBC + SLPTIME + SF2SA1QN + SEX + SMKSTAT, data = systol_log_reg_lm_dat, family = binomial)
+
+PC3_bin_sum = summary(PC3_log_mod)
+
+
+stargazer2(PC3_log_mod, odd.ratio=TRUE, type="latex", single.row = TRUE, digits = 5)
 
 exp(PC3_bin_sum$coefficients[,1][-1])
 ```
+
+# RETRYING TABLES
+```{r}
+model1 <- PC1_log_mod
+model2 <- PC2_log_mod
+model3 <- PC3_log_mod
+
+stargazer::stargazer(PC1_log_mod)
+
+get_odds_ratios <- function(model) {
+  exp_coef <- exp(coef(model))                     # Odds ratios
+  conf_int <- exp(confint(model))                  # Confidence intervals
+  p_values <- summary(model)$coefficients[, 4]     # Extract p-values
+  
+  # Add asterisks based on significance levels
+  significance <- ifelse(p_values < 0.01, "$^{***}$",
+                         ifelse(p_values < 0.05, "$^{**}$", 
+                                ifelse(p_values < 0.1, "$^{*}$", "")))
+  
+  # Combine odds ratios with asterisks
+  odds_ratios <- paste0(round(exp_coef, 3), significance)
+  
+  # Create a data frame
+  data.frame(
+    Estimate = odds_ratios,
+    `Lower 95% CI` = round(conf_int[, 1], 3),
+    `Upper 95% CI` = round(conf_int[, 2], 3)
+  )
+}
+
+# Extract odds ratios for each model
+or_model1 <- get_odds_ratios(model1)
+or_model2 <- get_odds_ratios(model2)
+or_model3 <- get_odds_ratios(model3)
+
+
+# Combine into a single data frame
+combined_table <- cbind(
+  Variable = rownames(or_model1),
+  Model1 = or_model1$Estimate,
+  Model1_CI = paste0("(", or_model1$`Lower.95..CI`, ", ", or_model1$`Upper.95..CI`, ")"),
+  Model2 = or_model2$Estimate,
+  Model2_CI = paste0("(", or_model2$`Lower.95..CI`, ", ", or_model2$`Upper.95..CI`, ")"),
+  Model3 = or_model3$Estimate,
+  Model3_CI = paste0("(", or_model3$`Lower.95..CI`, ", ", or_model3$`Upper.95..CI`, ")")
+)
+
+library(xtable)
+# Use xtable to create the LaTeX table
+print(xtable(combined_table, align = c("l", "r", "r", "r", "r", "r", "r", "r")),
+      include.rownames = FALSE,
+      digits = 4,
+      sanitize.text.function = identity) # To keep parentheses in CI
+
+
+```
+
 
 ## Multiple Linear Regression and Relative Importance
 
